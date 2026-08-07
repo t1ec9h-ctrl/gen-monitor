@@ -802,7 +802,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.85.1-skip-shift</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.85.2-shift-guard</span></div>
         </div>
       </div>
     </div>
@@ -1110,7 +1110,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.85.1-skip-shift';
+const VERSION = '1.85.2-shift-guard';
 
 // ---------- default state ----------
 // ============================================================
@@ -3383,7 +3383,10 @@ function computeUnitPlanUncached(customer, unit, opts = {}) {
     // slot came out empty after a deferral.
     let nominal = m.hours;
     let shiftedFrom = null;
-    const below = vacated.filter(v => v < m.hours);
+    // A freed slot the machine has already run past can't take anything: dating
+    // an upcoming inspection there puts it years in the past, next to records
+    // that have nothing to do with it. Only slots still ahead can absorb a shift.
+    const below = vacated.filter(v => v < m.hours && (v + offset) > current.hours);
     if (below.length > 0) {
       // Fill the LOWEST free position. With one deferral this is the same slot
       // either way; with two or more, taking the highest left a permanent hole
@@ -6018,6 +6021,8 @@ function showUnitDiagnostics(customerId, unitId) {
   const cyc = safeCall(() => getCycleForUnit(u), null);
   L.push(`cycle: ${cyc ? `${cyc.name} step=${cyc.step} types=${(cyc.types||[]).map(t=>t.type+':'+t.interval).join(',')}` : '(なし)'}`);
   if (cyc && Array.isArray(cyc.explicit)) L.push(`  explicit=${cyc.explicit.length}件 repeat=${cyc.explicitRepeat} maxMonths=${cyc.explicitMaxMonths || '-'}`);
+  L.push(`catalog keys: ${Object.keys(state.inspectionCycles || {}).join(', ') || '(空)'}`);
+  L.push(`usableTypes: ${cyc ? (cyc.types || []).filter(t => t.interval > 0).length : 0}件`);
   L.push(`cycleOverride: ${u.cycleOverride ? 'あり' : 'なし'}`);
   L.push(`hoursLog=${(u.hoursLog||[]).length}件  history=${(u.inspectionHistory||[]).length}件  planned=${(u.inspectionPlanned||[]).length}件`);
   const mo = (u.monthlyOperation || []).filter(r => r.hours != null);
@@ -6334,7 +6339,18 @@ function renderUnitDetail(root) {
         // is unusable instead of leaving an empty table.
         if ((plan0.predicted || []).length > 0) return '';
         const paceOk = plan0.model && plan0.model.fallback > 0;
-        const why = !plan0.current ? '運転時間の記録がありません'
+        // Distinguish "no catalogue entry" from "entry exists but has no usable
+        // intervals". Both used to read as "設定を読み取れません", which pointed
+        // nowhere — the maker field is filled in, so the setup checklist shows
+        // 5/5 complete and nothing looks wrong.
+        const cyc0 = safeCall(() => getCycleForUnit(u), null);
+        const usableTypes = cyc0 && (cyc0.types || []).filter(t => t.interval > 0).length;
+        const hasExplicit = cyc0 && Array.isArray(cyc0.explicit) && cyc0.explicit.length > 0;
+        const why = !cyc0
+          ? `機種「${escapeHtml(u.maker || '(未設定)')}」が機種カタログにありません。設定タブで登録するか、ユニット編集で別の機種を選んでください`
+          : (!usableTypes && !hasExplicit)
+          ? `機種カタログ「${escapeHtml(cyc0.name || u.maker)}」に点検種別が登録されていません。設定タブ → 機種カタログでこの機種を編集し、点検種別と周期（例 A:2,000h）を追加してください`
+          : !plan0.current ? '運転時間の記録がありません'
           : !paceOk ? '月別の稼働時間がすべて0のため、次にいつ到達するか計算できません'
           : '点検サイクルの設定を読み取れません';
         return `
@@ -9282,6 +9298,8 @@ const CHANGELOG = [
     '繰り延べ先の枠を予約扱いに。間の点検は繰り延べ先の手前まで繰り上がり、繰り延べ先に元々あった点検も1枠繰り上がるため、同じ運転時間に2行並ばなくなりました。繰り延べ先より後ろの点検は動きません',
   ]},
   { v: '1.85', items: [
+    '既に運転時間を過ぎた枠へ点検が繰り上がり、過去の日付に並んでいたのを修正',
+    '機種カタログに点検種別が登録されていない場合に、その旨を名指しで表示',
     '「表示項目」の上下ボタンを復活。ユニット画面のカードを好きな順に並べ替えられます（設定はこのパソコンに保存）',
     '繰り延べで繰り上げた後、予測範囲の最後の枠が空欄になっていたのを修正（範囲の判定を繰り上げ後の位置で行うように）',
     '2件以上を繰り延べたとき、下の枠に穴が残って点検間隔が周期を超えて伸びていたのを修正（空いた枠へ順に詰めます）',
