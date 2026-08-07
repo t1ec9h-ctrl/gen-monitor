@@ -861,7 +861,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.86.3-one-entry</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.87.0-families</span></div>
         </div>
       </div>
     </div>
@@ -1169,7 +1169,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.86.3-one-entry';
+const VERSION = '1.87.0-families';
 
 // ---------- default state ----------
 // ============================================================
@@ -1187,6 +1187,7 @@ const DEMO_MAKER_C = 'demo_maker_c';
 function demoCycleCatalog() {
   return {
     [DEMO_MAKER_A]: {
+      family: '【デモ】〇〇重工系',
       name: '〇〇重工（デモ）', step: 2000, initial: 500, initialLabel: 'A',
       types: [
         { type: 'A', interval: 2000, days: 0.5, workDesc: '点火プラグ交換・各部増し締め' },
@@ -1199,6 +1200,7 @@ function demoCycleCatalog() {
       alternating: { base: 'B', types: ['B1', 'B2'], resetAfter: ['C', 'D', 'E', 'F'] },
     },
     [DEMO_MAKER_C]: {
+      family: '【デモ】□□パワー系',
       // Mirrors the cadence shape of a real fleet — alternating base checks,
       // staged overhauls on their own recurrence, and a post-overhaul check
       // pinned +1,000h after its parent — with a generic demo name.
@@ -2286,7 +2288,25 @@ function getCycle(makerKey) {
 // Return the effective cycle for a specific unit, honoring per-unit overrides.
 // If unit.cycleOverride exists (and has a types array), use that; otherwise fall back
 // to the maker-level cycle catalog.
+// Per-unit light adjustments applied on top of whatever cycle the unit
+// resolves to. A full per-unit override copies the catalogue entry, so later
+// edits to the base stop reaching the unit. The adjust layer records only the
+// delta — types switched off, intervals changed — and the base keeps flowing
+// through for everything untouched. This is what makes catalogue copies
+// (maker_copy, maker_450 …) unnecessary for per-site tweaks.
+function applyCycleAdjust(unit, cyc) {
+  const adj = unit && unit.cycleAdjust;
+  if (!cyc || !adj) return cyc;
+  const excl = new Set(adj.exclude || []);
+  const ivs = adj.intervals || {};
+  let types = (cyc.types || []).filter(t => !excl.has(t.type));
+  types = types.map(t => (t.interval && !t.postOverhaul && ivs[t.type] > 0 ? { ...t, interval: ivs[t.type] } : t));
+  return { ...cyc, types };
+}
 function getCycleForUnit(unit) {
+  return applyCycleAdjust(unit, getCycleForUnitBase(unit));
+}
+function getCycleForUnitBase(unit) {
   if (unit && unit.cycleOverride && Array.isArray(unit.cycleOverride.types) && unit.cycleOverride.types.length > 0) {
     // Merge: override takes precedence, but inherit missing fields from the maker default
     const base = getCycle(unit.maker) || {};
@@ -6203,6 +6223,7 @@ function showUnitDiagnostics(customerId, unitId) {
   L.push(`catalog keys: ${Object.keys(state.inspectionCycles || {}).join(', ') || '(空)'}`);
   L.push(`usableTypes: ${cyc ? (cyc.types || []).filter(t => t.interval > 0).length : 0}件`);
   L.push(`cycleOverride: ${u.cycleOverride ? 'あり' : 'なし'}`);
+  L.push(`cycleAdjust: ${u.cycleAdjust ? `あり（除外:${(u.cycleAdjust.exclude || []).join(',') || 'なし'} 周期:${JSON.stringify(u.cycleAdjust.intervals || {})}）` : 'なし'}`);
   L.push(`hoursLog=${(u.hoursLog||[]).length}件  history=${(u.inspectionHistory||[]).length}件  planned=${(u.inspectionPlanned||[]).length}件`);
   const mo = (u.monthlyOperation || []).filter(r => r.hours != null);
   const moSum = mo.reduce((a, r) => a + Number(r.hours || 0), 0);
@@ -7464,6 +7485,7 @@ function renderUnitDetail(root) {
           <button class="btn btn-accent btn-sm" onclick="openUnitCycleModal('${c.id}','${u.id}')">サイクルを編集</button>
         </div>
       </div>
+      <div class="px-5 pt-4">${renderCycleAdjustPanel(c, u)}</div>
       <div class="p-5" id="unitCycleView">${renderUnitCycleView(u)}</div>
     </div>
     `}
@@ -9536,6 +9558,11 @@ const CHANGELOG = [
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
   ]},
+  { v: '1.87', items: [
+    '機種カタログに「系統」を追加。同型でも点検項目が違う機種が増えても、機種一覧と号機登録の機種選択で系統ごとにまとまって表示されます（既存カタログはそのまま・系統は任意入力）',
+    'ユニット画面の点検サイクル設定に「この号機だけの調整」を追加。カタログを複製せずに、点検種別のオン/オフと周期だけをこの号機に対して変更できます。変えていない部分は基準カタログの修正がそのまま反映され続けます（機種_copyの増殖が不要に）',
+    '診断に cycleAdjust の内容を表示',
+  ]},
   { v: '1.86.3', items: [
     '「過去分をまとめて登録」を1画面に統合。開くと上に実施記録の貼り付け欄（Excelコピーそのまま・読み取るとプレビューへ）、下に推定値の候補一覧が並び、開く前にどちらか迷う必要がなくなりました。別ボタンだった「まとめて取り込み」は廃止（機能はこの画面内に）',
   ]},
@@ -10142,7 +10169,23 @@ function renderSettingsPage(root) {
         </div>
       </div>` : `
       <div class="p-5 space-y-3">
-        ${Object.entries(state.inspectionCycles || {}).map(([key, cycle]) => `
+        ${(() => {
+          // Group the catalogue by 系統 so variants of one family sit together
+          // instead of scattering as the list grows.
+          const _fam = cy => ((cy && cy.family) || '').trim();
+          const _ents = Object.entries(state.inspectionCycles || {}).sort((a, b) =>
+            (_fam(a[1]) || '\uffff').localeCompare(_fam(b[1]) || '\uffff', 'ja')
+            || String(a[1].name || a[0]).localeCompare(String(b[1].name || b[0]), 'ja'));
+          const _show = _ents.some(e => _fam(e[1]));
+          let _pf = null;
+          const _hdr = cy => {
+            if (!_show) return '';
+            const f = _fam(cy) || '系統未設定';
+            if (f === _pf) return '';
+            _pf = f;
+            return `<div class="section-title mt-4 mb-1" style="font-size:11px; letter-spacing:.08em;">${escapeHtml(f)}</div>`;
+          };
+          return _ents.map(([key, cycle]) => _hdr(cycle) + `
           <div class="hairline p-4 rounded">
             <div class="flex items-start justify-between gap-3 mb-2">
               <div class="flex-1">
@@ -10226,7 +10269,8 @@ function renderSettingsPage(root) {
               使用中ユニット: ${countUnitsUsingCycle(key)}台
             </div>
           </div>
-        `).join('')}
+        `).join('');
+        })()}
       </div>`}
     </div>
 
@@ -10477,7 +10521,16 @@ function openUnitModal(customerId, unitId) {
           <label class="field-label">機種 / メーカー <span class="text-[11px] text-[color:var(--ink-muted)] font-normal">(任意)</span></label>
           <select id="um_maker" class="select">
             <option value="" ${!currentMaker || !state.inspectionCycles[currentMaker] ? 'selected' : ''}>— 未設定 —</option>
-            ${makerKeys.map(k => `<option value="${k}" ${k === currentMaker ? 'selected' : ''}>${escapeHtml(state.inspectionCycles[k].name || k)}</option>`).join('')}
+            ${(() => {
+              const fam = k => ((state.inspectionCycles[k].family || '') + '').trim();
+              const opt = k => `<option value="${k}" ${k === currentMaker ? 'selected' : ''}>${escapeHtml(state.inspectionCycles[k].name || k)}</option>`;
+              if (!makerKeys.some(fam)) return makerKeys.map(opt).join('');
+              const groups = new Map();
+              for (const k of makerKeys) { const f = fam(k); if (!groups.has(f)) groups.set(f, []); groups.get(f).push(k); }
+              return [...groups.entries()].sort((a, b) => (a[0] || '\uffff').localeCompare(b[0] || '\uffff', 'ja')).map(([f, ks]) =>
+                f ? `<optgroup label="${escapeHtml(f)}">${ks.map(opt).join('')}</optgroup>` : ks.map(opt).join('')
+              ).join('');
+            })()}
           </select>
           <div class="text-[11px] text-[color:var(--ink-muted)] mt-1 um-engine-only">未設定の場合、運転時間ベースの点検予測が無効になります。機種を追加/編集するには <a href="#" onclick="closeModal(); showPage('settings'); return false;" style="color: var(--accent); text-decoration: underline;">設定 › 点検サイクル</a> から</div>
           <div class="text-[11px] text-[color:var(--ink-muted)] mt-1 um-chiller-only" style="display:none;">冷凍機は記録目的のみ（点検判定には使われません）</div>
@@ -15012,6 +15065,8 @@ function registerPastedCycle() {
       userModified: true,
     };
     if (!state.inspectionCycles) state.inspectionCycles = {};
+    const _famEl0 = document.getElementById('cy_family');
+    if (_famEl0 && _famEl0.value.trim()) cyc.family = _famEl0.value.trim();
     state.inspectionCycles[key] = cyc;
     saveState();
     _cyclePasteState = null;
@@ -15034,6 +15089,8 @@ function registerPastedCycle() {
     ...(d.alternating ? { alternating: d.alternating } : {}),
     userModified: true,
   };
+  const _famEl = document.getElementById('cy_family');
+  if (_famEl && _famEl.value.trim()) cycle.family = _famEl.value.trim();
   if (!state.inspectionCycles) state.inspectionCycles = {};
   state.inspectionCycles[key] = cycle;
   saveState();
@@ -15054,6 +15111,7 @@ function openCycleModal(key) {
     key: key || '',
     originalKey: key || '',
     name: editing?.name || '',
+    family: editing?.family || '',
     step: editing?.step || 2000,
     initial: editing?.initial ?? '',
     initialType: editing?.initialType || '',
@@ -15102,6 +15160,14 @@ function renderCycleModal__body() {
           <div>
             <label class="field-label">表示名 <span style="color: var(--red);">*</span></label>
             <input id="cy_name" class="input" value="${escapeHtml(ed.name)}" placeholder="カワサキ KG-12">
+          </div>
+          <div class="col-span-2">
+            <label class="field-label">系統 <span class="text-[11px] text-[color:var(--ink-muted)] font-normal">(任意・分類用)</span></label>
+            <input id="cy_family" class="input" list="cy_family_list" value="${escapeHtml(ed.family || '')}" placeholder="例: 三菱系 1000kW級、ヤンマー系 など">
+            <datalist id="cy_family_list">
+              ${[...new Set(Object.values(state.inspectionCycles || {}).map(cy => ((cy && cy.family) || '').trim()).filter(Boolean))].map(f => `<option value="${escapeHtml(f)}">`).join('')}
+            </datalist>
+            <div class="text-[11px] text-[color:var(--ink-muted)] mt-1">同じ系統の機種は、機種一覧と号機登録の機種選択でまとめて表示されます。同型でも点検項目が違う機種が増えてきたら、同じ系統名を付けて整理してください</div>
           </div>
         </div>
         ${ed.explicit && ed.explicit.length ? `
@@ -16720,6 +16786,87 @@ function renderUnitCycleView(u) {
 }
 
 // Revert this unit to the maker-default cycle
+// The light per-unit adjustment editor: base types listed with an on/off
+// switch and an interval field. Anything left blank keeps following the
+// catalogue, so fixing the catalogue fixes every unit that hasn't diverged.
+function renderCycleAdjustPanel(c, u) {
+  const base = getCycleForUnitBase(u);
+  if (!base || !(base.types || []).length) return '';
+  if (Array.isArray(base.explicit) && base.explicit.length) return '';
+  const adj = u.cycleAdjust || {};
+  const excl = new Set(adj.exclude || []);
+  const ivs = adj.intervals || {};
+  const has = (adj.exclude || []).length > 0 || Object.keys(ivs).length > 0;
+  return `
+  <details class="hairline rounded" ${has ? 'open' : ''} style="background: var(--surface-2);">
+    <summary class="px-3 py-2 text-xs cursor-pointer font-semibold" data-tip="カタログを複製せずに、この号機だけ点検種別のオン/オフや周期を変えられます。ここで変えていない部分は、基準カタログを直せばこの号機にもそのまま反映されます">
+      この号機だけの調整
+      ${has
+        ? `<span class="chip ml-1" style="font-size:10px; background: var(--gold); color: #fff;">調整中</span>`
+        : `<span class="text-[10px] font-normal text-[color:var(--ink-muted)] ml-1">（カタログを複製せずに種別や周期を変える）</span>`}
+    </summary>
+    <div class="px-3 pb-3">
+      <table class="w-full text-xs" style="border-collapse: collapse;">
+        <thead><tr class="hairline-b text-[color:var(--ink-muted)]">
+          <th class="py-1 text-left" style="width:52px;">使用</th>
+          <th class="py-1 text-left">種別</th>
+          <th class="py-1 text-right" style="width:140px;">周期 (h)</th>
+        </tr></thead>
+        <tbody>
+        ${(base.types || []).map(t => `
+          <tr class="hairline-b">
+            <td class="py-1.5"><input type="checkbox" class="cyadj-use" data-type="${escapeHtml(t.type)}" ${excl.has(t.type) ? '' : 'checked'} style="cursor:pointer;"></td>
+            <td class="py-1.5"><span class="tag tag-${escapeHtml(t.type)}">${inspTypeLabel(t.type)}</span>${t.postOverhaul ? '<span class="text-[10px] text-[color:var(--ink-muted)] ml-1">OH後</span>' : ''}</td>
+            <td class="py-1.5 text-right">
+              ${t.interval && !t.postOverhaul
+                ? `<input type="number" step="500" class="input input-mono cyadj-iv" data-type="${escapeHtml(t.type)}" style="width:120px; padding:3px 6px; font-size:12px; text-align:right;" placeholder="標準 ${t.interval}" value="${ivs[t.type] > 0 ? ivs[t.type] : ''}">`
+                : `<span class="font-mono text-[11px] text-[color:var(--ink-muted)]">${t.postOverhaul ? '+' + fmtHours(t.interval) + 'h（親に追従）' : (t.firstAt != null ? `初回${fmtHours(t.firstAt)}h / 毎${fmtHours(t.recurEvery)}h` : '—')}</span>`}
+            </td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+      <div class="flex gap-2 justify-end mt-2 items-center">
+        <span class="text-[10px] text-[color:var(--ink-muted)] mr-auto">空欄＝カタログの標準値に追従</span>
+        ${has ? `<button class="btn btn-xs" onclick="clearCycleAdjust('${c.id}','${u.id}')">調整を解除</button>` : ''}
+        <button class="btn btn-accent btn-xs" onclick="saveCycleAdjust('${c.id}','${u.id}')">調整を保存</button>
+      </div>
+    </div>
+  </details>`;
+}
+
+function saveCycleAdjust(customerId, unitId) {
+  const c = state.customers.find(x => x.id === customerId);
+  const u = c && c.units.find(x => x.id === unitId);
+  if (!u) return;
+  const exclude = [...document.querySelectorAll('.cyadj-use')].filter(el => !el.checked).map(el => el.dataset.type);
+  const intervals = {};
+  for (const el of document.querySelectorAll('.cyadj-iv')) {
+    const v = parseInt(el.value, 10);
+    if (v > 0) intervals[el.dataset.type] = v;
+  }
+  if (exclude.length === 0 && Object.keys(intervals).length === 0) {
+    delete u.cycleAdjust;
+  } else {
+    u.cycleAdjust = {
+      ...(exclude.length ? { exclude } : {}),
+      ...(Object.keys(intervals).length ? { intervals } : {}),
+    };
+  }
+  saveState();
+  showPageKeepingScroll('unit-detail');
+  toast(u.cycleAdjust ? 'この号機だけの調整を保存しました' : '調整はありません（機種標準どおり）', 'success');
+}
+
+function clearCycleAdjust(customerId, unitId) {
+  const c = state.customers.find(x => x.id === customerId);
+  const u = c && c.units.find(x => x.id === unitId);
+  if (!u) return;
+  delete u.cycleAdjust;
+  saveState();
+  showPageKeepingScroll('unit-detail');
+  toast('調整を解除しました（機種標準どおり）', 'success');
+}
+
 function revertUnitCycle(customerId, unitId) {
   if (!confirm('このユニットの点検サイクルを機種標準に戻します。設定した内容は失われます。続行しますか？')) return;
   const c = state.customers.find(x => x.id === customerId);
