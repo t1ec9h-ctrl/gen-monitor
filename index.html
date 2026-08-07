@@ -802,7 +802,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.85.3-defer-merge</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.85.4-history-shift</span></div>
         </div>
       </div>
     </div>
@@ -1110,7 +1110,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.85.3-defer-merge';
+const VERSION = '1.85.4-history-shift';
 
 // ---------- default state ----------
 // ============================================================
@@ -3330,25 +3330,77 @@ function computeUnitPlanUncached(customer, unit, opts = {}) {
   // idle, work folded into a bigger one) and rename them; the cycle stays intact
   // while individual entries deviate.
   const ovr = unit.scheduleOverrides || {};
+
+  // Grid positions somebody is deferring INTO. These are reserved: they never
+  // enter the free list, so a shifted inspection can't land on top of the moved
+  // one, and the shift chain stops at the destination.
+  const deferClaims = new Set();
+  for (const oc of Object.values(ovr)) { if (oc && oc.deferTo > 0) deferClaims.add(oc.deferTo); }
+
+  // ---- assignment walk ----------------------------------------------------
+  // One pass over the grid decides where every piece of work SITS, before any
+  // dating — and recorded inspections join the shift chain exactly like
+  // upcoming ones. A crew that skips a slot carries out each following
+  // inspection one slot early; the records keep the work's name (84,000h) while
+  // the position it filled is one lower (82,000h). Keeping records out of the
+  // chain made the vacancy leapfrog every recorded row and land under the next
+  // upcoming inspection, dragging it thousands of hours into the past.
+  //   histShifts: performed work name -> grid position it actually filled
+  //   predAssign: milestone -> { nominal, shiftedFrom }, or null when the
+  //               slot's own work is folded into a deferred inspection
+  //               arriving at that position
+  const histShifts = new Map();
+  const predAssign = new Map();
+  {
+    const vac = [];   // ascending
+    const free = (h) => { if (!deferClaims.has(h)) { vac.push(h); vac.sort((a, b) => a - b); } };
+    for (const m of milestones) {
+      const o = ovr[String(m.hours)];
+      if (performedNominals.has(m.hours)) {
+        // The record pins the work by name; if a lower slot stood open when it
+        // was carried out, that is the position it filled.
+        if (vac.length > 0 && vac[0] < m.hours) {
+          histShifts.set(m.hours, vac.shift());
+          free(m.hours);
+        }
+        continue;
+      }
+      if (plannedNominals.has(m.hours)) continue;  // a booking pins its slot; vacancies pass over it
+      if (o && (o.skipped || o.deferTo > 0)) { free(m.hours); continue; }
+      const below = vac.filter(v => v < m.hours);
+      if (below.length === 0 && deferClaims.has(m.hours)) {
+        // No vacancy for this slot's own work to move into, and the deferred
+        // inspection arrives here: the visit IS that inspection, so its natural
+        // work is folded in rather than listed as a second row.
+        predAssign.set(m.hours, null);
+        continue;
+      }
+      if (below.length > 0) {
+        // Fill the LOWEST free position — taking the highest left a permanent
+        // hole below and stretched the inspection interval past the step.
+        const target = below[0];
+        vac.splice(vac.indexOf(target), 1);
+        predAssign.set(m.hours, { nominal: target, shiftedFrom: m.hours });
+        free(m.hours);
+      } else {
+        predAssign.set(m.hours, { nominal: m.hours, shiftedFrom: null });
+      }
+    }
+  }
+  // The offset anchors on the last inspection. If that record sat in a shifted
+  // position, the drift must be measured from the slot it actually filled:
+  // against its name a unit read −1,460h "early" when it was really running
+  // +540h past the (shifted) grid — and every forecast inherited the error.
+  if (!offsetInfo.simulated && offsetInfo.nominal != null && histShifts.has(offsetInfo.nominal)) {
+    const shiftedNominal = histShifts.get(offsetInfo.nominal);
+    offset = Math.round((offsetInfo.anchor ? offsetInfo.anchor.atHours : shiftedNominal) - shiftedNominal);
+    offsetInfo = { ...offsetInfo, offset, nominal: shiftedNominal, nominalShiftedFrom: offsetInfo.nominal };
+  }
   const contractEnd = safeCall(() => contractEndOf(unit, model, current, offset), null);
 
   const predicted = [];
   const skippedSlots = [];
   const deferred = [];
-  const vacated = [];   // grid positions freed up by a skip or deferral, kept sorted
-  // Grid positions somebody is deferring INTO. These are reserved: they never
-  // enter the free list, so a shifted inspection can't land on top of the moved
-  // one. The slot's natural occupant still shifts down like everything else,
-  // which is what clears the position for the deferred work — and because the
-  // reserved slot never re-enters the pool, the shift chain stops there and
-  // inspections beyond the destination stay where they are.
-  const deferClaims = new Set();
-  for (const oc of Object.values(ovr)) { if (oc && oc.deferTo > 0) deferClaims.add(oc.deferTo); }
-  const freeSlot = (h) => {
-    if (deferClaims.has(h)) return;
-    vacated.push(h);
-    vacated.sort((a, b) => a - b);
-  };
   for (const m of milestones) {
     if (performedNominals.has(m.hours)) continue; // already performed at this nominal position
     if (plannedNominals.has(m.hours)) continue;   // a plan is already registered for this slot
@@ -3358,10 +3410,6 @@ function computeUnitPlanUncached(customer, unit, opts = {}) {
       // struck through rather than silently losing a row
       skippedSlots.push({ nominalHours: m.hours, type: m.type, displayName: o.displayName || '',
         note: o.note || '', deferTo: o.deferTo > 0 ? o.deferTo : null });
-      // A skipped slot is empty, so the following inspections move up into it —
-      // the modal has promised 「次の点検が繰り上がります」 since the option
-      // existed, but until now only a deferral actually freed the position.
-      freeSlot(m.hours);
       continue;
     }
     // Deferred: this slot isn't done here, it's done later. Unlike a skip the
@@ -3369,43 +3417,13 @@ function computeUnitPlanUncached(customer, unit, opts = {}) {
     if (o && o.deferTo > 0) {
       deferred.push({ from: m.hours, to: o.deferTo, type: o.type || m.type,
         displayName: o.displayName || '', note: o.note || '' });
-      // Everything after moves up one slot: the work booked for the next grid
-      // position is now carried out where this one would have been. Record the
-      // vacated position so the following entries can shift into it.
-      freeSlot(m.hours);
       continue;
     }
-    // Shift the entry down into a freed position BEFORE dating it. The work keeps
-    // its identity — a 84,000h inspection stays a 84,000h inspection — but it is
-    // carried out at the slot below, so the date and every horizon test must use
-    // the shifted position. Shifting after the loop (v1.84.0) meant the milestone
-    // just past the prediction window never entered the list, so the last grid
-    // slot came out empty after a deferral.
-    let nominal = m.hours;
-    let shiftedFrom = null;
-    // A freed slot the machine has already run past can't take anything: dating
-    // an upcoming inspection there puts it years in the past, next to records
-    // that have nothing to do with it. Only slots still ahead can absorb a shift.
-    const below = vacated.filter(v => v < m.hours && (v + offset) > current.hours);
-    if (below.length === 0 && deferClaims.has(m.hours)) {
-      // A deferral lands on this slot and there is no usable vacancy for the
-      // slot's own work to move down into (the freed slot is in the past, or
-      // there never was one). The visit here IS the deferred inspection — its
-      // natural work is folded into that visit rather than listed as a second
-      // row at the same reading.
-      continue;
-    }
-    if (below.length > 0) {
-      // Fill the LOWEST free position. With one deferral this is the same slot
-      // either way; with two or more, taking the highest left a permanent hole
-      // below and stretched the gap between consecutive inspections past the
-      // step — exactly the consumable-life risk deferral is meant to avoid.
-      const target = below[0];
-      shiftedFrom = m.hours;                       // what the work is called
-      nominal = target;                            // where it is now carried out
-      vacated.splice(vacated.indexOf(target), 1);
-      freeSlot(m.hours);                           // its own slot is now free (unless reserved)
-    }
+    // Positions were fixed by the assignment walk above; dating happens here.
+    const asg = predAssign.get(m.hours);
+    if (asg === null) continue;                    // folded into the deferred visit at this slot
+    const nominal = asg ? asg.nominal : m.hours;
+    const shiftedFrom = asg ? asg.shiftedFrom : null;
     const plannedHours = nominal + offset;
     // NOTE: we no longer skip past-due milestones. They show as "期限超過" in the schedule table.
     // A slot the machine has already run past has no future date. That's not the
@@ -3482,7 +3500,8 @@ function computeUnitPlanUncached(customer, unit, opts = {}) {
   }
   predicted.sort((a, b) => a.hours - b.hours);
 
-  return { current, model, planned, predicted, skippedSlots, deferred, contractEnd, confidence: calcConfidence(unit), offsetInfo };
+  return { current, model, planned, predicted, skippedSlots, deferred, contractEnd, confidence: calcConfidence(unit), offsetInfo,
+    histShifts: Object.fromEntries(histShifts) };
 }
 
 // ============================================================
@@ -6216,7 +6235,7 @@ function renderUnitDetail(root) {
       <div class="flex-1">
         <div class="font-semibold text-sm" style="color: #854D0E;">直近点検に ${plan.offsetInfo.offset > 0 ? '+' : ''}${plan.offsetInfo.offset} h の${plan.offsetInfo.offset < 0 ? '前倒し' : '遅延'}実績あり</div>
         <div class="text-[12px] text-[color:var(--ink-soft)] mt-1">
-          直近 ${inspTypeLabel(plan.offsetInfo.anchor.type)}点検を <span class="font-mono font-semibold">${fmtHours(plan.offsetInfo.anchor.atHours)} h</span> で実施（通常位置 ${fmtHours(plan.offsetInfo.nominal)} h）。
+          直近 ${inspTypeLabel(plan.offsetInfo.anchor.type)}点検を <span class="font-mono font-semibold">${fmtHours(plan.offsetInfo.anchor.atHours)} h</span> で実施（通常位置 ${fmtHours(plan.offsetInfo.nominal)} h${plan.offsetInfo.nominalShiftedFrom != null ? `・<s style="opacity:.6;">${fmtHours(plan.offsetInfo.nominalShiftedFrom)} h</s> から繰り上げ` : ''}）。
           <strong>次回以降もこのズレが続く前提で予測します</strong>（点検の間隔が通常サイクルどおりになります）。
         </div>
         <div class="text-[11px] text-[color:var(--ink-muted)] mt-1">別のタイミングで実施した場合の影響は「次回点検シミュレーション」で確認できます。表では通常位置も併記します。</div>
@@ -6325,7 +6344,15 @@ function renderUnitDetail(root) {
             ? `<span class="tag tag-${latest.type} align-middle">${latest.nominalHours != null ? `${fmtHours(latest.nominalHours)}h ` : ''}${inspTypeLabel(latest.type)}</span>`
             : '—'}</div>
           <div class="stat-hint">${latest
-            ? `${fmtDate(latest.date)}　@${fmtHours(latest.atHours)}h${latest.nominalHours != null ? `（${latest.atHours - latest.nominalHours > 0 ? '+' : ''}${Math.round(latest.atHours - latest.nominalHours)}h）` : ''}`
+            ? (() => {
+                // Deviation measured from the slot the record actually filled,
+                // when a skip before it moved the work down a position.
+                const hsPlan = safeCall(() => computeUnitPlan(c, u), null);
+                const hsMap = (hsPlan && hsPlan.histShifts) || {};
+                const eff = latest.nominalHours != null && hsMap[latest.nominalHours] != null
+                  ? hsMap[latest.nominalHours] : latest.nominalHours;
+                return `${fmtDate(latest.date)}　@${fmtHours(latest.atHours)}h${eff != null ? `（${latest.atHours - eff > 0 ? '+' : ''}${Math.round(latest.atHours - eff)}h）` : ''}`;
+              })()
             : '履歴なし'}</div>
           `;
         })()}
@@ -7663,14 +7690,21 @@ function renderScheduleTable(c, u, plan) {
     }
   }
   // Include performed inspections (history) so users can see past inspections in one timeline
+  const histShifts = plan.histShifts || {};
   for (const h of (u.inspectionHistory || [])) {
     if (!h.date) continue;
     const dt = new Date(h.date);
     if (isNaN(dt)) continue;
+    // A record whose slot was skipped before it shows the work's name struck
+    // through above the position it actually filled — same convention as
+    // upcoming rows — and its deviation is measured from that position.
+    const shiftedTo = h.nominalHours != null && histShifts[h.nominalHours] != null
+      ? histShifts[h.nominalHours] : null;
     rows.push({
       type: h.type,
       hours: h.atHours != null ? h.atHours : 0,
-      nominalHours: h.nominalHours != null ? h.nominalHours : null,
+      nominalHours: shiftedTo != null ? shiftedTo : (h.nominalHours != null ? h.nominalHours : null),
+      shiftedFrom: shiftedTo != null ? h.nominalHours : null,
       date: dt,
       source: 'history',
       note: h.note,
@@ -9301,6 +9335,11 @@ function pruneOldAndReport(years) {
 // different from last week" has an answer on the same screen. Newest first;
 // worded from the user's side rather than the code's.
 const CHANGELOG = [
+  { v: '1.85.4', items: [
+    '登録済みの点検記録も繰り上げの対象に。スキップした枠より後の記録は、元の呼び名を取り消し線で、その下に実際に埋めた位置を表示し、時間ズレもその位置から計算し直します',
+    '「通常位置とのズレ」も繰り上げ後の位置で再計算（例: −1,460h の前倒し表示が実際は +540h の遅延だったケースを補正）。以降の予測日もこの補正を引き継ぎます',
+    '直近点検カードのズレ表示も繰り上げ後の位置基準に',
+  ]},
   { v: '1.85.3', items: [
     '過去の枠を繰り延べたとき、繰り延べ先に元々ある点検を繰り延べた点検に統合して1行で表示（同じ運転時間に2行並ばないように）',
   ]},
