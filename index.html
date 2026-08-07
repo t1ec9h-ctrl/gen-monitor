@@ -802,7 +802,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.85.5-po-follow</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.85.6-audit</span></div>
         </div>
       </div>
     </div>
@@ -1110,7 +1110,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.85.5-po-follow';
+const VERSION = '1.85.6-audit';
 
 // ---------- default state ----------
 // ============================================================
@@ -3286,6 +3286,15 @@ function computeUnitPlanUncached(customer, unit, opts = {}) {
     for (let i = 0; i < 20; i++) {
       if (!performedNominalsSet.has(nextNominal)) break;
       nextNominal += step;
+    }
+    // When a skip or deferral has shifted the schedule, the next inspection sits
+    // at a shifted position the bare grid walk can't see — simulating against
+    // the grid slot put the offset out by a whole step. The plain (cached) plan
+    // already knows the real position; prefer it.
+    const basePlan = safeCall(() => computeUnitPlan(customer, unit, {}), null);
+    if (basePlan && basePlan.predicted) {
+      const nx = basePlan.predicted.find(p => !p.deferredFrom && p.hours > current.hours && p.nominalHours != null);
+      if (nx) nextNominal = nx.nominalHours;
     }
     const newOffset = Math.round(opts.simNextHours - nextNominal);
     offset = newOffset;
@@ -7782,8 +7791,15 @@ function renderScheduleTable(c, u, plan) {
   }
   // Skipped slots keep their place in the list so the decision stays visible
   for (const sk of (plan.skippedSlots || [])) {
+    // Same dating rules as live rows: offset applied, and a slot the machine
+    // has already passed is estimated backwards — predictDateForHours would
+    // return "today" for it, drifting the struck row away from its position.
+    const skOff = plan.offsetInfo ? (plan.offsetInfo.offset || 0) : 0;
+    const skAt = sk.nominalHours + skOff;
     const d = plan.current && plan.model
-      ? predictDateForHours(new Date(plan.current.ts), plan.current.hours, sk.nominalHours, plan.model)
+      ? (skAt <= plan.current.hours
+          ? (safeCall(() => estimateDateForPastHours(new Date(plan.current.ts), plan.current.hours, skAt, plan.model), null) || new Date(plan.current.ts))
+          : predictDateForHours(new Date(plan.current.ts), plan.current.hours, skAt, plan.model))
       : null;
     rows.push({ type: sk.type, hours: sk.nominalHours, nominalHours: sk.nominalHours,
       date: d || new Date(8640000000000), source: 'skipped',
@@ -9402,6 +9418,11 @@ function pruneOldAndReport(years) {
 // different from last week" has an answer on the same screen. Newest first;
 // worded from the user's side rather than the code's.
 const CHANGELOG = [
+  { v: '1.85.6', items: [
+    '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
+    'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
+    '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
   { v: '1.85.5', items: [
     'オーバーホール後点検（D/E/F後+1,000hのAなど）は枠の詰め替えに参加せず、親点検の移動に追従するように（例: 84,000E→82,000なら 85,000A→83,000）。以降の点検周期が崩れていたのを修正',
     '予測が1件も範囲に入らない場合でも、次の1件だけは表示するように（予測範囲が短くて空になるケースの救済）',
