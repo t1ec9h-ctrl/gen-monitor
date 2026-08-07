@@ -825,7 +825,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.86.0-guided</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.86.1-import-path</span></div>
         </div>
       </div>
     </div>
@@ -1133,7 +1133,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.86.0-guided';
+const VERSION = '1.86.1-import-path';
 
 // ---------- default state ----------
 // ============================================================
@@ -5615,7 +5615,10 @@ function setupSteps(c, u) {
       action: `openInspectionModal('${c.id}','${u.id}')`,
       actionLabel: '登録',
       extra: missingPast > 0
-        ? `<button class="btn btn-xs btn-accent btn-attn tip-right" onclick="openBulkHistoryModal('${c.id}','${u.id}')" data-tip="現在の累積時間から逆算して、記録がない過去の点検 ${missingPast} 件をまとめて登録します">過去分をまとめて登録 (${missingPast})</button>`
+        ? `<div class="flex gap-1.5 flex-wrap justify-end">
+             <button class="btn btn-xs btn-accent btn-attn tip-right" onclick="openBulkHistoryModal('${c.id}','${u.id}')" data-tip="現在の累積時間から逆算して、記録がない過去の点検 ${missingPast} 件をまとめて登録します（日付・時間は推定値）">過去分をまとめて登録 (${missingPast})</button>
+             <button class="btn btn-xs tip-right" onclick="openHistoryImportModal('${c.id}','${u.id}')" data-tip="Excelや点検報告書から実施日・運転時間をコピーして貼り付け、実データのまま複数行を取り込みます。手元に記録があるならこちらが正確です">まとめて取り込み</button>
+           </div>`
         : '',
     });
 
@@ -7449,7 +7452,7 @@ function renderUnitDetail(root) {
               : `<button class="btn btn-sm" onclick="openBulkHistoryModal('${c.id}','${u.id}')" title="未記録の過去点検を確認">過去分を確認</button>`;
           })()}
           ${sortToggleButton('history')}
-          <button class="btn btn-sm" onclick="openHistoryImportModal('${c.id}','${u.id}')" title="Excelやメモから複数行をまとめて取り込みます">まとめて取り込み</button>
+          <button class="btn btn-sm" onclick="openHistoryImportModal('${c.id}','${u.id}')" data-tip="Excelや点検報告書から実施日・運転時間をコピーして貼り付け、実データのまま複数行を取り込みます">まとめて取り込み</button>
           <button class="btn btn-sm" onclick="openInspectionModal('${c.id}','${u.id}')">履歴追加</button>
         </div>
       </div>
@@ -9501,6 +9504,9 @@ const CHANGELOG = [
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
   ]},
+  { v: '1.86.1', items: [
+    '「過去分をまとめて登録」の横に「まとめて取り込み」も並べて表示（SETUPチェックリスト・登録モーダル内）。逆算の推定値で埋めるか、Excelなどの実データを貼り付けるかを選べることが分かるように',
+  ]},
   { v: '1.86', items: [
     'マウスを置くと説明が出るツールチップを追加。スケジュール表の全列見出し、診断・表示項目などの主要ボタンで、何を意味するかその場で確認できます',
     '「過去分をまとめて登録」をSETUPチェックリスト（前回点検の行）にも表示し、点滅で目立つように。新規登録した号機で1件ずつ入力する前に気づけます',
@@ -11344,6 +11350,9 @@ function openBulkHistoryModal(customerId, unitId) {
             <span class="text-[11px] text-[color:var(--ink-muted)]">
               ${current ? `現在 ${fmtHours(current.hours)}h までの点検はすべて記録済みです。` : '運転時間データを入力してください。'}
             </span>
+            <div class="mt-3">
+              <button class="btn btn-sm" onclick="openHistoryImportModal('${customerId}','${unitId}')" data-tip="Excelや点検報告書から実施日・運転時間を貼り付けて取り込みます">記録を貼り付けて取り込む</button>
+            </div>
           </div>
         </div>
         <div class="px-6 py-4 hairline-t flex justify-end">
@@ -11364,6 +11373,11 @@ function openBulkHistoryModal(customerId, unitId) {
           <div class="section-title-jp">過去の点検をまとめて登録</div>
           <div class="text-xs text-[color:var(--ink-muted)] mt-1">
             現在 ${current ? fmtHours(current.hours) + 'h' : '—'} までに実施済みのはずで、記録がない点検 <strong style="color: var(--amber);">${missing.length}件</strong>
+          </div>
+          <div class="text-[11px] mt-1.5" style="color: var(--ink-muted);">
+            ここでの日付・運転時間は稼働ペースからの<strong>推定値</strong>です。実施日や時間の記録が手元にあるなら、
+            <button class="btn btn-xs ml-1" onclick="openHistoryImportModal('${customerId}','${unitId}')">まとめて取り込み</button>
+            で実データのまま貼り付けるほうが正確です。
           </div>
         </div>
         <button class="btn btn-ghost btn-sm" onclick="closeModal()">×</button>
