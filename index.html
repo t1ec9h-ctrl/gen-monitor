@@ -34,6 +34,42 @@ button[data-tip], [data-tip].btn { cursor: pointer; }
 @keyframes attnPulse { 0%,100% { box-shadow: 0 0 0 0 rgba(198,146,46,.45); } 55% { box-shadow: 0 0 0 7px rgba(198,146,46,0); } }
 .btn-attn { animation: attnPulse 2.2s ease-out infinite; }
 @media print { .btn-attn { animation: none; } }
+
+/* ==== mobile (phone) adjustments ======================================== */
+@media (max-width: 760px) {
+  /* Breathing room is a desktop luxury — on a 360px screen it eats the data */
+  .px-6 { padding-left: .9rem; padding-right: .9rem; }
+  .p-6 { padding: .9rem; }
+  .px-5 { padding-left: .8rem; padding-right: .8rem; }
+  .mx-5 { margin-left: .4rem; margin-right: .4rem; }
+  .gap-6 { gap: .9rem; }
+  .mb-8 { margin-bottom: 1.1rem; }
+  .mb-6 { margin-bottom: 1rem; }
+  /* Wide tables scroll inside their card instead of dragging the whole page
+     sideways. :has() keeps this markup-free; the schedule table also gets a
+     working min-width so columns stay readable while swiping. */
+  .card > div:has(> table), .card div:has(> table.w-full) { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  #schedTable { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  #schedTable table { min-width: 880px; }
+  table { font-size: 12px; }
+  th, td { padding-left: 6px !important; padding-right: 6px !important; }
+  /* Modals become sheets: full width, controls reachable */
+  .modal-backdrop { padding: 8px; align-items: flex-start; }
+  .modal, .modal-lg, .modal-xl { max-width: 100%; width: 100%; max-height: 94vh; margin-top: 4px; }
+  /* Titles and the big meter number scale down a notch */
+  .stat-value { font-size: 1.35rem; }
+  .text-3xl { font-size: 1.4rem; line-height: 1.8rem; }
+  /* Section headers with many buttons wrap instead of overflowing */
+  .card .hairline-b.flex { flex-wrap: wrap; }
+}
+@media (pointer: coarse) {
+  /* Finger-sized targets; tooltips appear on tap (hover emulation) and must
+     not overhang the screen edge */
+  .btn { min-height: 36px; }
+  .btn-sm { min-height: 32px; }
+  .btn-xs { min-height: 28px; }
+  [data-tip]:hover::after { max-width: min(260px, 78vw); }
+}
 </style>
 <script id="chartjs-inline">
 /*!
@@ -825,7 +861,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.86.1-import-path</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.86.2-mobile</span></div>
         </div>
       </div>
     </div>
@@ -1133,7 +1169,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.86.1-import-path';
+const VERSION = '1.86.2-mobile';
 
 // ---------- default state ----------
 // ============================================================
@@ -9503,6 +9539,10 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '1.86.2', items: [
+    'スマートフォン表示を改善。余白を詰めて情報量を確保し、幅の広い表はカード内で横スワイプ（ページ全体が横に流れない）、モーダルは全幅シート表示に',
+    'タッチ操作向けにボタンを指で押しやすいサイズにし、ツールチップはタップで表示・画面からはみ出さないように',
   ]},
   { v: '1.86.1', items: [
     '「過去分をまとめて登録」の横に「まとめて取り込み」も並べて表示（SETUPチェックリスト・登録モーダル内）。逆算の推定値で埋めるか、Excelなどの実データを貼り付けるかを選べることが分かるように',
