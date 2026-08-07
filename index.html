@@ -802,7 +802,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.85.0-section-order</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.85.1-skip-shift</span></div>
         </div>
       </div>
     </div>
@@ -1110,7 +1110,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.85.0-section-order';
+const VERSION = '1.85.1-skip-shift';
 
 // ---------- default state ----------
 // ============================================================
@@ -3335,7 +3335,20 @@ function computeUnitPlanUncached(customer, unit, opts = {}) {
   const predicted = [];
   const skippedSlots = [];
   const deferred = [];
-  const vacated = [];   // grid positions freed up by a deferral, kept sorted
+  const vacated = [];   // grid positions freed up by a skip or deferral, kept sorted
+  // Grid positions somebody is deferring INTO. These are reserved: they never
+  // enter the free list, so a shifted inspection can't land on top of the moved
+  // one. The slot's natural occupant still shifts down like everything else,
+  // which is what clears the position for the deferred work — and because the
+  // reserved slot never re-enters the pool, the shift chain stops there and
+  // inspections beyond the destination stay where they are.
+  const deferClaims = new Set();
+  for (const oc of Object.values(ovr)) { if (oc && oc.deferTo > 0) deferClaims.add(oc.deferTo); }
+  const freeSlot = (h) => {
+    if (deferClaims.has(h)) return;
+    vacated.push(h);
+    vacated.sort((a, b) => a - b);
+  };
   for (const m of milestones) {
     if (performedNominals.has(m.hours)) continue; // already performed at this nominal position
     if (plannedNominals.has(m.hours)) continue;   // a plan is already registered for this slot
@@ -3345,6 +3358,10 @@ function computeUnitPlanUncached(customer, unit, opts = {}) {
       // struck through rather than silently losing a row
       skippedSlots.push({ nominalHours: m.hours, type: m.type, displayName: o.displayName || '',
         note: o.note || '', deferTo: o.deferTo > 0 ? o.deferTo : null });
+      // A skipped slot is empty, so the following inspections move up into it —
+      // the modal has promised 「次の点検が繰り上がります」 since the option
+      // existed, but until now only a deferral actually freed the position.
+      freeSlot(m.hours);
       continue;
     }
     // Deferred: this slot isn't done here, it's done later. Unlike a skip the
@@ -3355,8 +3372,7 @@ function computeUnitPlanUncached(customer, unit, opts = {}) {
       // Everything after moves up one slot: the work booked for the next grid
       // position is now carried out where this one would have been. Record the
       // vacated position so the following entries can shift into it.
-      vacated.push(m.hours);
-      vacated.sort((a, b) => a - b);
+      freeSlot(m.hours);
       continue;
     }
     // Shift the entry down into a freed position BEFORE dating it. The work keeps
@@ -3377,8 +3393,7 @@ function computeUnitPlanUncached(customer, unit, opts = {}) {
       shiftedFrom = m.hours;                       // what the work is called
       nominal = target;                            // where it is now carried out
       vacated.splice(vacated.indexOf(target), 1);
-      vacated.push(m.hours);                       // its own slot is now free
-      vacated.sort((a, b) => a - b);
+      freeSlot(m.hours);                           // its own slot is now free (unless reserved)
     }
     const plannedHours = nominal + offset;
     // NOTE: we no longer skip past-due milestones. They show as "期限超過" in the schedule table.
@@ -9262,6 +9277,10 @@ function pruneOldAndReport(years) {
 // different from last week" has an answer on the same screen. Newest first;
 // worded from the user's side rather than the code's.
 const CHANGELOG = [
+  { v: '1.85.1', items: [
+    'スキップでも以降の点検が1枠ずつ繰り上がるように（説明文どおりの動きに）。取り消し線の元の呼び名の下に実施位置を表示します',
+    '繰り延べ先の枠を予約扱いに。間の点検は繰り延べ先の手前まで繰り上がり、繰り延べ先に元々あった点検も1枠繰り上がるため、同じ運転時間に2行並ばなくなりました。繰り延べ先より後ろの点検は動きません',
+  ]},
   { v: '1.85', items: [
     '「表示項目」の上下ボタンを復活。ユニット画面のカードを好きな順に並べ替えられます（設定はこのパソコンに保存）',
     '繰り延べで繰り上げた後、予測範囲の最後の枠が空欄になっていたのを修正（範囲の判定を繰り上げ後の位置で行うように）',
