@@ -861,7 +861,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.87.0-families</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.87.1-drift-wording</span></div>
         </div>
       </div>
     </div>
@@ -1169,7 +1169,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.87.0-families';
+const VERSION = '1.87.1-drift-wording';
 
 // ---------- default state ----------
 // ============================================================
@@ -6757,10 +6757,12 @@ function renderUnitDetail(root) {
                   return null;
                 }, null);
                 if (rec && rec.rounds > 0) {
-                  return `${lastName}が通常より ${fmtHours(Math.abs(off))}h ${off < 0 ? '早い' : '遅い'}位置にあります。毎回この提案どおり許容いっぱいで実施していくと、<strong>${rec.rounds}回後（${rec.date ? fmtDate(rec.date) : ''}・${fmtHours(rec.nominal)}h点検）に通常位置へ戻ります</strong>。次回は ${fmtDate(w.recommendDate)}（${fmtHours(w.recommendHours)}h）ごろです。`;
+                  const lastAt = w.last && w.last.atHours != null ? `${fmtHours(Math.round(w.last.atHours))}h` : null;
+                  const lastWhen = w.last && w.last.date ? `${fmtDate(w.last.date)}に` : '';
+                  return `前回実施した${lastName}が、${lastWhen}通常位置より ${fmtHours(Math.abs(off))}h ${off < 0 ? '早い' : '遅い'}${lastAt ? ` ${lastAt} での実施` : '実施'}だったため、以降の点検位置も ${fmtHours(Math.abs(off))}h ${off < 0 ? '早く' : '遅く'}なっています。毎回この提案どおり許容いっぱいで実施していくと、<strong>${rec.rounds}回後（${rec.date ? fmtDate(rec.date) : ''}・${fmtHours(rec.nominal)}h点検）に通常位置へ戻ります</strong>。次回は ${fmtDate(w.recommendDate)}（${fmtHours(w.recommendHours)}h）ごろです。`;
                 }
                 if (w.verdict === 'stretch') {
-                  return `${lastName}を通常より ${fmtHours(Math.abs(off))}h 早く実施しているため、次の${fmtHours(w.nextNominal)}h点検を本来の位置まで待つと間隔の上限を超えます。期限いっぱいの ${fmtDate(w.recommendDate)}（${fmtHours(w.recommendHours)}h）で実施すると、ズレが ${off > 0 ? '+' : ''}${fmtHours(off)}h → ${w.resultingOffset > 0 ? '+' : ''}${fmtHours(w.resultingOffset)}h に縮まります。`;
+                  return `前回実施した${lastName}が通常より ${fmtHours(Math.abs(off))}h 早い実施${w.last && w.last.atHours != null ? `（${fmtHours(Math.round(w.last.atHours))}h）` : ''}だったため、次の${fmtHours(w.nextNominal)}h点検を本来の位置まで待つと間隔の上限を超えます。期限いっぱいの ${fmtDate(w.recommendDate)}（${fmtHours(w.recommendHours)}h）で実施すると、ズレが ${off > 0 ? '+' : ''}${fmtHours(off)}h → ${w.resultingOffset > 0 ? '+' : ''}${fmtHours(w.resultingOffset)}h に縮まります。`;
                 }
                 if (off !== 0 && w.resultingOffset === 0) {
                   return `${lastName}を${off < 0 ? '早め' : '遅め'}（${off > 0 ? '+' : ''}${fmtHours(off)}h）に実施していますが、次を ${fmtDate(w.recommendDate)} ごろ（${fmtHours(w.recommendHours)}h）に実施すれば本来の時期に戻せます。ずらしても許容内に収まります。`;
@@ -9557,6 +9559,9 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '1.87.1', items: [
+    'ズレの説明文を「前回実施した◯◯h点検が、◯月◯日に通常位置より100h早い◯◯hでの実施だったため…」の形に。ズレの原因が前回の実施実績にあることが読み取れるように',
   ]},
   { v: '1.87', items: [
     '機種カタログに「系統」を追加。同型でも点検項目が違う機種が増えても、機種一覧と号機登録の機種選択で系統ごとにまとまって表示されます（既存カタログはそのまま・系統は任意入力）',
