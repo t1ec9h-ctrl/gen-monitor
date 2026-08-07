@@ -802,7 +802,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.85.2-shift-guard</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.85.3-defer-merge</span></div>
         </div>
       </div>
     </div>
@@ -1110,7 +1110,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.85.2-shift-guard';
+const VERSION = '1.85.3-defer-merge';
 
 // ---------- default state ----------
 // ============================================================
@@ -3387,6 +3387,14 @@ function computeUnitPlanUncached(customer, unit, opts = {}) {
     // an upcoming inspection there puts it years in the past, next to records
     // that have nothing to do with it. Only slots still ahead can absorb a shift.
     const below = vacated.filter(v => v < m.hours && (v + offset) > current.hours);
+    if (below.length === 0 && deferClaims.has(m.hours)) {
+      // A deferral lands on this slot and there is no usable vacancy for the
+      // slot's own work to move down into (the freed slot is in the past, or
+      // there never was one). The visit here IS the deferred inspection — its
+      // natural work is folded into that visit rather than listed as a second
+      // row at the same reading.
+      continue;
+    }
     if (below.length > 0) {
       // Fill the LOWEST free position. With one deferral this is the same slot
       // either way; with two or more, taking the highest left a permanent hole
@@ -9293,6 +9301,9 @@ function pruneOldAndReport(years) {
 // different from last week" has an answer on the same screen. Newest first;
 // worded from the user's side rather than the code's.
 const CHANGELOG = [
+  { v: '1.85.3', items: [
+    '過去の枠を繰り延べたとき、繰り延べ先に元々ある点検を繰り延べた点検に統合して1行で表示（同じ運転時間に2行並ばないように）',
+  ]},
   { v: '1.85.1', items: [
     'スキップでも以降の点検が1枠ずつ繰り上がるように（説明文どおりの動きに）。取り消し線の元の呼び名の下に実施位置を表示します',
     '繰り延べ先の枠を予約扱いに。間の点検は繰り延べ先の手前まで繰り上がり、繰り延べ先に元々あった点検も1枠繰り上がるため、同じ運転時間に2行並ばなくなりました。繰り延べ先より後ろの点検は動きません',
