@@ -802,7 +802,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.85.4-history-shift</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.85.5-po-follow</span></div>
         </div>
       </div>
     </div>
@@ -1110,7 +1110,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.85.4-history-shift';
+const VERSION = '1.85.5-po-follow';
 
 // ---------- default state ----------
 // ============================================================
@@ -2484,7 +2484,7 @@ function generateMilestones(unit, startHours, maxHours, maxIterations = 1000, op
       if (parents.includes(m.type)) {
         const newH = m.hours + poInterval;
         if (newH <= maxHours) {
-          milestones.splice(i + 1, 0, { hours: newH, type: po.type, postOverhaul: true });
+          milestones.splice(i + 1, 0, { hours: newH, type: po.type, postOverhaul: true, poParent: m.hours, poGap: poInterval });
         }
       }
     }
@@ -2508,7 +2508,7 @@ function generateMilestones(unit, startHours, maxHours, maxIterations = 1000, op
       // Insert when: within the window AND not already scheduled AND not already performed
       if (newH <= maxHours && !performedPO.has(newH)) {
         if (!milestones.some(m => m.hours === newH && m.type === po.type)) {
-          milestones.push({ hours: newH, type: po.type, postOverhaul: true });
+          milestones.push({ hours: newH, type: po.type, postOverhaul: true, poParent: parentNominal, poGap: poInterval });
         }
       }
     }
@@ -3356,6 +3356,32 @@ function computeUnitPlanUncached(customer, unit, opts = {}) {
     const free = (h) => { if (!deferClaims.has(h)) { vac.push(h); vac.sort((a, b) => a - b); } };
     for (const m of milestones) {
       const o = ovr[String(m.hours)];
+      if (m.postOverhaul) {
+        // A post-overhaul check is defined RELATIVE to its parent (E + 1,000h),
+        // not as a grid slot of its own. It follows the parent's movement and
+        // never trades places in the vacancy chain — letting it take a grid
+        // vacancy put the whole chain off-step: 85,000h landing on 84,000h
+        // pushed 86,000h onto 85,000h and every interval after read short.
+        let parentPos = m.poParent != null ? m.poParent : null;
+        if (parentPos != null) {
+          if (histShifts.has(m.poParent)) parentPos = histShifts.get(m.poParent);
+          else {
+            const pa = predAssign.get(m.poParent);
+            if (pa && pa.nominal != null) parentPos = pa.nominal;
+          }
+        }
+        const pos = parentPos != null ? parentPos + (m.poGap || (m.hours - m.poParent)) : m.hours;
+        if (performedNominals.has(m.hours)) {
+          if (pos !== m.hours) histShifts.set(m.hours, pos);
+          continue;
+        }
+        if (plannedNominals.has(m.hours)) continue;
+        if (o && (o.skipped || o.deferTo > 0)) continue;   // listed by the main loop; frees no grid slot
+        predAssign.set(m.hours, pos !== m.hours
+          ? { nominal: pos, shiftedFrom: m.hours }
+          : { nominal: m.hours, shiftedFrom: null });
+        continue;
+      }
       if (performedNominals.has(m.hours)) {
         // The record pins the work by name; if a lower slot stood open when it
         // was carried out, that is the position it filled.
@@ -3439,7 +3465,10 @@ function computeUnitPlanUncached(customer, unit, opts = {}) {
       : predictDateForHours(new Date(current.ts), current.hours, plannedHours, model);
     if (!d) d = predictDateForHours(new Date(current.ts), current.hours, plannedHours, model);
     if (!d) break;
-    if (d > maxDate) break;
+    // Nothing else fits the window — but an empty schedule explains nothing.
+    // The first upcoming inspection is always worth a row, even when a slow
+    // pace puts it beyond the chosen prediction range.
+    if (d > maxDate && predicted.length > 0) break;
     // Past the end of cover there is nothing to plan
     if (contractEnd) {
       if (contractEnd.hours != null && plannedHours > contractEnd.hours) break;
@@ -6069,6 +6098,44 @@ function showUnitDiagnostics(customerId, unitId) {
   const ce = plan && plan.contractEnd;
   L.push(`contractEnd=${ce && ce.by ? `${fmtDate(ce.by)} (${ce.reason})` : 'なし'}`);
   L.push(`予測範囲=${state.settings.predictionYears || 5}年`);
+  // --- forecast pipeline probe -------------------------------------------
+  // Re-runs each stage of the forecast by hand and prints the intermediate
+  // values, so an empty prediction can be traced to the stage that emptied it
+  // instead of guessed at from the outside.
+  L.push(`--- 予測プローブ ---`);
+  L.push(`perType=${safeCall(() => isPerTypeCycle(getCycleForUnit(u)), false) ? 'YES（時間経過ベースの周期）' : 'no'}`);
+  const probe = safeCall(() => {
+    const cur = getCurrentHoursState(u);
+    if (!cur) return ['probe: 運転時間の記録なし'];
+    const oi = calcMaintenanceOffset(u);
+    const off = oi.offset || 0;
+    let md = buildMonthlyModel(modelInputFor(u));
+    if (!md || md.fallback == null || !(md.fallback > 0)) {
+      const fl = safeCall(() => paceFromReadings(u), null);
+      if (fl) md = fl;
+    }
+    const yrs = state.settings.predictionYears || 5;
+    const dailyRough = md && md.fallback ? md.fallback / 30 : 2;
+    const maxH = Math.min(cur.hours + (dailyRough * 365 * yrs) + 5000, cur.hours + 200000);
+    const curNom = cur.hours - off;
+    const recNoms = (u.inspectionHistory || []).filter(h => h.nominalHours != null && h.type !== 'initial' && h.type !== 'OTHER').map(h => h.nominalHours);
+    const scanFrom = recNoms.length ? Math.min(curNom, Math.min(...recNoms)) : curNom;
+    let ms = generateMilestones(u, scanFrom, maxH + Math.abs(off));
+    ms = resolveAlternating(u, ms, u.inspectionHistory || []);
+    const out = [];
+    out.push(`scanFrom=${Math.round(scanFrom)}  maxHours=${Math.round(maxH)}  milestones=${ms.length}件`);
+    if (ms.length) out.push(`先頭: ${ms.slice(0, 6).map(m => fmtHours(m.hours) + m.type + (m.postOverhaul ? '*' : '')).join(', ')}`);
+    out.push(`記録済み通常位置: ${recNoms.slice().sort((a, b) => a - b).map(n => fmtHours(n)).join(', ') || '(なし — 記録に通常位置が入っていません)'}`);
+    const perf = new Set(recNoms);
+    const first = ms.find(m => !perf.has(m.hours));
+    if (!first) { out.push(`次の未実施枠: なし（生成された全枠が記録済み扱い）`); return out; }
+    const target = first.hours + off;
+    const maxDate = addDays(new Date(cur.ts), yrs * 365);
+    const d = safeCall(() => predictDateForHours(new Date(cur.ts), cur.hours, target, md), null);
+    out.push(`次の未実施枠: ${fmtHours(first.hours)}${first.type} → 到達 ${fmtHours(Math.round(target))}h  予測日=${d ? fmtDate(d) : 'null（月別ペースでは到達しない）'}  範囲末=${fmtDate(maxDate)}${d && d > maxDate ? '  ← 予測範囲の外！' : ''}`);
+    return out;
+  }, ['probe: 例外が発生しました']);
+  for (const ln of probe) L.push(ln);
   const text = L.join('\n');
   openModal(`
     <div class="modal modal-lg">
@@ -9335,6 +9402,11 @@ function pruneOldAndReport(years) {
 // different from last week" has an answer on the same screen. Newest first;
 // worded from the user's side rather than the code's.
 const CHANGELOG = [
+  { v: '1.85.5', items: [
+    'オーバーホール後点検（D/E/F後+1,000hのAなど）は枠の詰め替えに参加せず、親点検の移動に追従するように（例: 84,000E→82,000なら 85,000A→83,000）。以降の点検周期が崩れていたのを修正',
+    '予測が1件も範囲に入らない場合でも、次の1件だけは表示するように（予測範囲が短くて空になるケースの救済）',
+    '「診断」に予測プローブを追加。マイルストーン生成〜次の未実施枠の予測日まで段階ごとの値を表示し、予測が空になる原因を特定できます',
+  ]},
   { v: '1.85.4', items: [
     '登録済みの点検記録も繰り上げの対象に。スキップした枠より後の記録は、元の呼び名を取り消し線で、その下に実際に埋めた位置を表示し、時間ズレもその位置から計算し直します',
     '「通常位置とのズレ」も繰り上げ後の位置で再計算（例: −1,460h の前倒し表示が実際は +540h の遅延だったケースを補正）。以降の予測日もこの補正を引き継ぎます',
