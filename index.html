@@ -802,7 +802,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.84.0-slot-shift</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.85.0-section-order</span></div>
         </div>
       </div>
     </div>
@@ -1110,7 +1110,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.84.0-slot-shift';
+const VERSION = '1.85.0-section-order';
 
 // ---------- default state ----------
 // ============================================================
@@ -3335,7 +3335,7 @@ function computeUnitPlanUncached(customer, unit, opts = {}) {
   const predicted = [];
   const skippedSlots = [];
   const deferred = [];
-  const vacated = [];   // grid positions freed up by a deferral
+  const vacated = [];   // grid positions freed up by a deferral, kept sorted
   for (const m of milestones) {
     if (performedNominals.has(m.hours)) continue; // already performed at this nominal position
     if (plannedNominals.has(m.hours)) continue;   // a plan is already registered for this slot
@@ -3356,9 +3356,31 @@ function computeUnitPlanUncached(customer, unit, opts = {}) {
       // position is now carried out where this one would have been. Record the
       // vacated position so the following entries can shift into it.
       vacated.push(m.hours);
+      vacated.sort((a, b) => a - b);
       continue;
     }
-    const plannedHours = m.hours + offset;
+    // Shift the entry down into a freed position BEFORE dating it. The work keeps
+    // its identity — a 84,000h inspection stays a 84,000h inspection — but it is
+    // carried out at the slot below, so the date and every horizon test must use
+    // the shifted position. Shifting after the loop (v1.84.0) meant the milestone
+    // just past the prediction window never entered the list, so the last grid
+    // slot came out empty after a deferral.
+    let nominal = m.hours;
+    let shiftedFrom = null;
+    const below = vacated.filter(v => v < m.hours);
+    if (below.length > 0) {
+      // Fill the LOWEST free position. With one deferral this is the same slot
+      // either way; with two or more, taking the highest left a permanent hole
+      // below and stretched the gap between consecutive inspections past the
+      // step — exactly the consumable-life risk deferral is meant to avoid.
+      const target = below[0];
+      shiftedFrom = m.hours;                       // what the work is called
+      nominal = target;                            // where it is now carried out
+      vacated.splice(vacated.indexOf(target), 1);
+      vacated.push(m.hours);                       // its own slot is now free
+      vacated.sort((a, b) => a - b);
+    }
+    const plannedHours = nominal + offset;
     // NOTE: we no longer skip past-due milestones. They show as "期限超過" in the schedule table.
     // A slot the machine has already run past has no future date. That's not the
     // end of the list — it's an inspection that was missed, and it has to stay
@@ -3367,7 +3389,7 @@ function computeUnitPlanUncached(customer, unit, opts = {}) {
     // last inspection; for a slot BELOW the meter that projection lands years
     // ahead and the row sorted to the bottom, far from the records it sits
     // between. Judge by the grid position and date it from history instead.
-    const alreadyPassed = m.hours <= (current.hours - offset) || plannedHours <= current.hours;
+    const alreadyPassed = nominal <= (current.hours - offset) || plannedHours <= current.hours;
     let d = alreadyPassed
       ? (safeCall(() => estimateDateForPastHours(new Date(current.ts), current.hours, Math.min(plannedHours, current.hours), model), null) || new Date(current.ts))
       : predictDateForHours(new Date(current.ts), current.hours, plannedHours, model);
@@ -3378,12 +3400,15 @@ function computeUnitPlanUncached(customer, unit, opts = {}) {
     if (contractEnd) {
       if (contractEnd.hours != null && plannedHours > contractEnd.hours) break;
       if (contractEnd.date && d > contractEnd.date) break;   // hard expiry only
-      // The nominated inspection is the last one covered — include it, stop after
+      // The nominated inspection is the last one covered — include it, stop after.
+      // Judged by the work's identity (m.hours), not the shifted position: the
+      // override that nominated it is keyed by what the inspection is called.
       if (contractEnd.slotNominal != null && m.hours > contractEnd.slotNominal) break;
     }
     predicted.push({
       hours: plannedHours,
-      nominalHours: m.hours,
+      nominalHours: nominal,
+      shiftedFrom,
       type: (o && o.type) || m.type,
       displayName: (o && o.displayName) || '',
       slotNote: (o && o.note) || '',
@@ -3417,26 +3442,6 @@ function computeUnitPlanUncached(customer, unit, opts = {}) {
     if (deferred.some(d => d.from === from)) continue;
     deferred.push({ from, to: o.deferTo, type: o.type || getInspectionType(unit.maker, from) || 'A',
       displayName: o.displayName || '', note: o.note || '' });
-  }
-
-  // Shift the remaining entries down into the freed positions. The work keeps
-  // its identity — a 84,000h inspection stays a 84,000h inspection — but it is
-  // carried out at the slot below, so both figures have to travel together.
-  if (vacated.length > 0) {
-    const free = vacated.slice().sort((a, b) => a - b);
-    for (const p of predicted) {
-      const below = free.filter(v => v < p.nominalHours);
-      if (below.length === 0) continue;
-      const target = below[below.length - 1];
-      p.shiftedFrom = p.nominalHours;   // what the work is called
-      p.nominalHours = target;          // where it is now carried out
-      p.hours = target + offset;
-      const d2 = safeCall(() => predictDateForHours(new Date(current.ts), current.hours, p.hours, model), null);
-      if (d2) p.date = d2;
-      free.splice(free.indexOf(target), 1);
-      free.push(p.shiftedFrom);
-      free.sort((a, b) => a - b);
-    }
   }
 
   // Insert the deferred entries at their new positions
@@ -5522,7 +5527,7 @@ function renderSetupProgress(c, u) {
   const allDone = doneCount === steps.length;
   // Once everything is in place this card is just noise, so it collapses itself
   return `
-    <details class="card mb-6" ${allDone ? '' : 'open'}>
+    <details class="card mb-6" data-sec="setup" ${allDone ? '' : 'open'}>
       <summary class="px-5 py-4 cursor-pointer" style="list-style: none;">
         <div class="flex items-center justify-between gap-3 flex-wrap">
           <div>
@@ -5927,6 +5932,27 @@ function saveUnitSecPref(prefKey) {
 
 function isSecVisible(key) { return !unitSecPref().hidden.has(key); }
 
+// Permute the rendered section cards into the saved order. Only elements
+// carrying data-sec move, and they move among the positions those elements
+// already occupy — placeholders mark the original slots so everything between
+// them (back button, header, contract notices, DRIFT card) stays where it is.
+// Multiple elements may share a key (the window card has two variants; only
+// one renders at a time) — the sort is stable, so ties keep template order.
+function applySectionOrder(root) {
+  const els = Array.from(root.children).filter(el => el.dataset && el.dataset.sec);
+  if (els.length < 2) return;
+  const order = unitSecPref().order;
+  const rank = k => { const i = order.indexOf(k); return i < 0 ? 999 : i; };
+  const sorted = els.slice().sort((a, b) => rank(a.dataset.sec) - rank(b.dataset.sec));
+  const slots = els.map(el => {
+    const ph = document.createComment('sec-slot');
+    root.insertBefore(ph, el);
+    return ph;
+  });
+  els.forEach(el => el.remove());
+  slots.forEach((ph, i) => { root.insertBefore(sorted[i], ph); ph.remove(); });
+}
+
 function toggleUnitSection(key) {
   const p = unitSecPref();
   if (p.hidden.has(key)) p.hidden.delete(key); else p.hidden.add(key);
@@ -6037,7 +6063,7 @@ function renderSectionPrefModal() {
             ${p.ownEntry
               ? 'この号機だけの設定です。他の号機には影響しません。'
               : '現在は全ユニット共通の既定を表示中。変更するとこの号機だけの設定になります。'}
-            このパソコンにのみ保存され、データには含まれません。<br><span style="color:#B45309;">表示する項目の切り替えのみ有効です。並び順の変更は未対応で、上下ボタンは外しています。</span>
+            このパソコンにのみ保存され、データには含まれません。上下ボタンで表示順を変えられます。
           </div>
         </div>
         <button class="btn btn-ghost btn-sm" onclick="closeModal()">×</button>
@@ -6057,7 +6083,11 @@ function renderSectionPrefModal() {
                   <div class="text-[10px] text-[color:var(--ink-muted)]">${sec.hint}</div>
                 </span>
               </label>
-              <span class="text-[10px] text-[color:var(--ink-muted)]" title="表示順の変更は未対応です">—</span>`;
+              <div class="flex gap-1 no-print">
+                <button class="btn btn-ghost btn-xs" onclick="moveUnitSection('${k}', -1)" ${i === 0 ? 'disabled style="opacity:.3;"' : ''} title="上へ">↑</button>
+                <button class="btn btn-ghost btn-xs" onclick="moveUnitSection('${k}', 1)" ${i === p.order.length - 1 ? 'disabled style="opacity:.3;"' : ''} title="下へ">↓</button>
+              </div>
+            </div>`;
           }).join('')}
         </div>
       </div>
@@ -6333,7 +6363,7 @@ function renderUnitDetail(root) {
       if (!w) return '';
       if (!w.hasLast) {
         return `
-        <div class="card mb-6">
+        <div class="card mb-6" data-sec="window">
           <div class="px-5 py-4 hairline-b">
             <div class="section-title">NEXT INSPECTION WINDOW</div>
             <div class="section-title-jp">次回点検の実施範囲</div>
@@ -6404,7 +6434,7 @@ function renderUnitDetail(root) {
       ].sort((a, b) => a.hours - b.hours);
 
       return `
-      <div class="card mb-6">
+      <div class="card mb-6" data-sec="window">
         <div class="px-5 py-4 hairline-b flex items-center justify-between flex-wrap gap-2">
           <div>
             <div class="section-title">NEXT INSPECTION WINDOW</div>
@@ -6684,7 +6714,7 @@ function renderUnitDetail(root) {
 
     <!-- Inspection Schedule Table (engines only) -->
     ${(!usesRunHours(u) || !isSecVisible('schedule')) ? '' : `
-    <div class="card mb-6">
+    <div class="card mb-6" data-sec="schedule">
       <div class="flex items-center justify-between px-5 py-4 hairline-b flex-wrap gap-3">
         <div>
           <div class="section-title">INSPECTION SCHEDULE</div>
@@ -6802,7 +6832,7 @@ function renderUnitDetail(root) {
     `}
 
     ${!isSecVisible('calendar') ? '' : `
-    <div class="card mb-6">
+    <div class="card mb-6" data-sec="calendar">
       <div class="flex items-center justify-between px-5 py-4 hairline-b">
         <div>
           <div class="section-title">CALENDAR INSPECTIONS</div>
@@ -6865,7 +6895,7 @@ function renderUnitDetail(root) {
 
 <!-- Cumulative Hours Chart + Monthly Heatmap (engines only) -->
     ${(!usesRunHours(u) || !isSecVisible('cumhours')) ? '' : `
-    <div class="card mb-6">
+    <div class="card mb-6" data-sec="cumhours">
       <div class="px-5 py-4 hairline-b"><div class="section-title">CUMULATIVE HOURS</div><div class="section-title-jp">累積運転時間</div><div class="text-xs text-[color:var(--ink-muted)] mt-1">実績 & 予測（点検milestoneを四角で表示）</div></div>
       <div class="p-5">
         <!-- Fixed-height positioned wrapper, as every other chart here uses. Without
@@ -6879,7 +6909,7 @@ function renderUnitDetail(root) {
     `}
 
     ${(!usesRunHours(u) || !isSecVisible('heatmap')) ? '' : `
-    <div class="card mb-6">
+    <div class="card mb-6" data-sec="heatmap">
       <div class="flex items-center justify-between px-5 py-4 hairline-b">
         <div><div class="section-title">MONTHLY OPERATION HEATMAP</div><div class="section-title-jp">月別稼働ヒートマップ${(() => {
           const n = safeCall(() => pendingMonthCount(u), 0);
@@ -6914,7 +6944,7 @@ function renderUnitDetail(root) {
         ? model.fallback - modelAll.fallback : null;
       return `
       ${(!usesRunHours(u) || !isSecVisible('blackout')) ? '' : `
-      <div class="card mb-6">
+      <div class="card mb-6" data-sec="blackout">
         <div class="px-5 py-4 hairline-b">
           <div class="section-title">BLACKOUT MONTHS</div>
           <div class="section-title-jp">避けたい時期</div>
@@ -6943,7 +6973,7 @@ function renderUnitDetail(root) {
       </div>`}
 
       ${!isSecVisible('howcalc') ? '' : `
-      <details class="card mb-6">
+      <details class="card mb-6" data-sec="howcalc">
         <summary class="px-5 py-4 cursor-pointer" style="list-style: none;">
           <div class="section-title">HOW THIS IS CALCULATED</div>
           <div class="section-title-jp">点検時期はどう計算しているか <span class="text-[color:var(--ink-muted)] text-xs font-normal">（クリックで開く）</span></div>
@@ -7119,7 +7149,7 @@ function renderUnitDetail(root) {
     <!-- Stop impact forecast — generating units only. Chillers and auxiliaries
          don't feed the bus, so stopping them has no receive-power impact. -->
     ${(affectsDemand(u) && isSecVisible('stop') && c.hourlyPower && c.hourlyPower.length > 0) ? `
-    <div class="card mb-6">
+    <div class="card mb-6" data-sec="stop">
       <div class="px-5 py-4 hairline-b">
         <div class="section-title">STOP IMPACT — このユニットを止めたら</div>
         <div class="section-title-jp">ユニット停止時の受電予測</div>
@@ -7157,7 +7187,7 @@ function renderUnitDetail(root) {
 
     <!-- Unit-level Inspection Cycle Override (run-hour based units only) -->
     ${(!usesRunHours(u) || !isSecVisible('cycle')) ? '' : `
-    <div class="card mb-6">
+    <div class="card mb-6" data-sec="cycle">
       <div class="px-5 py-4 hairline-b flex items-center justify-between flex-wrap gap-2">
         <div>
           <div class="section-title">INSPECTION CYCLE</div>
@@ -7183,7 +7213,7 @@ function renderUnitDetail(root) {
     `}
 
     ${!isSecVisible('history') ? '' : `
-    <div class="card mb-6">
+    <div class="card mb-6" data-sec="history">
       <div class="flex items-center justify-between px-5 py-4 hairline-b flex-wrap gap-2">
         <div>
           <div class="section-title">INSPECTION HISTORY</div>
@@ -7210,7 +7240,7 @@ function renderUnitDetail(root) {
 
 <!-- Hours Log (engines only) -->
     ${(!usesRunHours(u) || !isSecVisible('hourslog')) ? '' : `
-    <div class="card">
+    <div class="card mb-6" data-sec="hourslog">
       <div class="flex items-center justify-between px-5 py-4 hairline-b">
         <div><div class="section-title">HOURS LOG</div><div class="section-title-jp">運転時間ログ</div></div>
         <div class="flex items-center gap-3">
@@ -7228,6 +7258,13 @@ function renderUnitDetail(root) {
     </div>
     `}
   `;
+
+  // Rearrange the section cards to the saved order. The template stays written
+  // in its natural order; each card carries data-sec, and the elements are
+  // permuted among the slots they already occupy — anything without data-sec
+  // (header, notices, DRIFT card) keeps its place. Runs before the charts
+  // initialize so canvases are already in their final position.
+  safeRun('applySectionOrder', () => applySectionOrder(root));
 
   if (usesRunHours(u)) {
     safeRun('renderScheduleTable', () => renderScheduleTable(c, u, plan));
@@ -7784,7 +7821,7 @@ function renderScheduleTable(c, u, plan) {
             : (r.source==='history'
                 ? `<button class="btn btn-ghost btn-xs" onclick="openInspectionModal('${c.id}','${u.id}','${r.historyId}')">編集</button>`
                 : ((r.source==='predicted' || r.source==='skipped') && r.nominalHours != null
-                    ? `<button class="btn btn-ghost btn-xs" onclick="openSlotModal('${c.id}','${u.id}',${r.nominalHours},'${r.type}')" title="表示名の変更・スキップ・契約終了">編集</button>`
+                    ? `<button class="btn btn-ghost btn-xs" onclick="openSlotModal('${c.id}','${u.id}',${r.shiftedFrom != null ? r.shiftedFrom : r.nominalHours},'${r.type}')" title="表示名の変更・スキップ・契約終了">編集</button>`
                     : ''));
           if (r.source === 'skipped') {
             rowStyle = ' style="background:#F5F5F3; color:#9A968B;"';
@@ -9225,6 +9262,12 @@ function pruneOldAndReport(years) {
 // different from last week" has an answer on the same screen. Newest first;
 // worded from the user's side rather than the code's.
 const CHANGELOG = [
+  { v: '1.85', items: [
+    '「表示項目」の上下ボタンを復活。ユニット画面のカードを好きな順に並べ替えられます（設定はこのパソコンに保存）',
+    '繰り延べで繰り上げた後、予測範囲の最後の枠が空欄になっていたのを修正（範囲の判定を繰り上げ後の位置で行うように）',
+    '2件以上を繰り延べたとき、下の枠に穴が残って点検間隔が周期を超えて伸びていたのを修正（空いた枠へ順に詰めます）',
+    '繰り上がった行の「編集」が別の枠の設定を開いていたのを修正（元の呼び名の枠を開きます）',
+  ]},
   { v: '1.84', items: [
     '点検を繰り延べると、以降の点検が1枠ずつ繰り上がるように。表では元の呼び名を取り消し線で、その下に実施位置を表示します',
     '繰り延べ先やメモに取り消し線がかかっていたのを修正',
