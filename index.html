@@ -861,7 +861,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.87.1-drift-wording</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.87.2-grid-snap</span></div>
         </div>
       </div>
     </div>
@@ -1169,7 +1169,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.87.1-drift-wording';
+const VERSION = '1.87.2-grid-snap';
 
 // ---------- default state ----------
 // ============================================================
@@ -2576,11 +2576,17 @@ function generateMilestones(unit, startHours, maxHours, maxIterations = 1000, op
   // the ones that matter. Look back a bounded distance from the newest record —
   // far enough to catch a recently skipped slot, not the whole service life.
   const LOOKBACK_SLOTS = 6;
-  const lookBackStart = opts.fromStart
+  const rawLookBack = opts.fromStart
     ? step
     : Math.max(step, performedNominals.length > 0
         ? Math.max(lowestPerformed, highestPerformed - LOOKBACK_SLOTS * step) + step
         : highestPerformed + step);
+  // An off-grid record must not drag the walk off the grid. An initial 500h
+  // check logged with a regular type makes lowestPerformed 500, the walk then
+  // visits 2,500 → 4,500 → … and never lands on a multiple of the step — no
+  // type ever fires and the schedule comes out empty. Snap up to the next grid
+  // position; anything recorded there is filtered by the caller anyway.
+  const lookBackStart = Math.ceil(rawLookBack / step) * step;
 
   // Step 1: generate regular milestones (starting from lookBackStart, going up to maxHours)
   let h = lookBackStart;
@@ -9559,6 +9565,9 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '1.87.2', items: [
+    '初回点検（500hなど周期の刻みに乗らない位置）を通常種別で記録している号機で、以降の点検が1件も算出されなくなっていたのを修正。マイルストーン生成の開始位置を周期の格子に吸着させました（「今後の点検を算出できていません」の一因）',
   ]},
   { v: '1.87.1', items: [
     'ズレの説明文を「前回実施した◯◯h点検が、◯月◯日に通常位置より100h早い◯◯hでの実施だったため…」の形に。ズレの原因が前回の実施実績にあることが読み取れるように',
