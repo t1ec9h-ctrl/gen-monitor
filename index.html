@@ -862,7 +862,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.88.4-defer-edit</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.0-customer-doc</span></div>
         </div>
       </div>
     </div>
@@ -1170,7 +1170,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.88.4-defer-edit';
+const VERSION = '1.89.0-customer-doc';
 
 // ---------- default state ----------
 // ============================================================
@@ -4025,7 +4025,7 @@ function estimateStopDemandForPeriod(c, u, targetDate) {
 // Which sections a customer-facing plan includes. Some sites shouldn't be shown
 // receive-power figures at all, so this is a per-session choice made on the preview
 // rather than something baked into the document.
-let _planDocSections = { schedule: true, calendar: true, demand: true };
+let _planDocSections = { schedule: true, history: true, monthly: false, calendar: true, demand: true };
 
 // Customer names get a courtesy title appended for printing, but some are already
 // entered with one — "◯◯さま" then rendered as "◯◯さま 御中". Detect an existing
@@ -4164,6 +4164,61 @@ function buildPlanDocForUnit(c, u, opts = {}) {
         ${showWork ? '<br>所要日数は標準的な目安です。作業内容・費用は別途ご提示いたします。' : ''}
       </div>
       ` : ''}
+
+      ${sec.history ? (() => {
+        // Customer-facing history: what was done, when, at what hours, and the
+        // interval kept — no edit buttons, no internal warnings, no empty-state
+        // hints. A unit with nothing recorded simply doesn't get the section.
+        const hrows = (u.inspectionHistory || [])
+          .filter(h => h.type !== 'PLUG' && h.date && h.atHours != null)
+          .sort((a, b) => new Date(b.date) - new Date(a.date));
+        if (hrows.length === 0) return '';
+        const py = state.settings.schedPastYears || 0;
+        const cut = py > 0 ? new Date(Date.now() - py * 365 * 86400000) : null;
+        const shown = (cut ? hrows.filter(h => new Date(h.date) >= cut) : hrows).slice(0, 20);
+        if (shown.length === 0) return '';
+        const clock = hrows.filter(h => h.type !== 'OTHER').slice().sort((a, b) => a.atHours - b.atHours);
+        const gapOf = (h) => {
+          const i = clock.findIndex(x => x.id === h.id);
+          return i > 0 ? Math.round(h.atHours - clock[i - 1].atHours) : null;
+        };
+        return `
+      <div class="pd-sec-title">点検実施履歴${shown.length < hrows.length ? `（直近${py}年）` : ''}</div>
+      <table class="pd-table">
+        <thead><tr>
+          <th style="width: 20%;">実施日</th>
+          <th style="width: 30%;">点検</th>
+          <th class="pd-r" style="width: 25%;">実施時 運転時間</th>
+          <th class="pd-r" style="width: 25%;">前回からの間隔</th>
+        </tr></thead>
+        <tbody>
+          ${shown.map(h => {
+            const g = gapOf(h);
+            return `<tr>
+              <td>${fmtDate(h.date)}</td>
+              <td>${h.displayName ? escapeHtml(h.displayName) : inspName(h.nominalHours, h.type)}</td>
+              <td class="pd-r">${fmtHours(h.atHours)} h</td>
+              <td class="pd-r">${g != null ? fmtHours(g) + ' h' : '—'}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>`;
+      })() : ''}
+
+      ${sec.monthly ? (() => {
+        // Twelve months of actual operation, entered months only — a blank grid
+        // full of 未入力 tells the customer nothing.
+        const mo = (u.monthlyOperation || []).filter(r => r.hours != null && !isNaN(r.hours))
+          .sort((a, b) => a.yearMonth < b.yearMonth ? -1 : 1).slice(-12);
+        if (mo.length === 0) return '';
+        return `
+      <div class="pd-sec-title">月別稼働実績（直近${mo.length}ヶ月）</div>
+      <table class="pd-table">
+        <thead><tr>${mo.map(r => `<th class="pd-r" style="font-size:10px;">${r.yearMonth.slice(2).replace('-', '/')}</th>`).join('')}</tr></thead>
+        <tbody><tr>${mo.map(r => `<td class="pd-r">${fmtHours(Math.round(r.hours))}</td>`).join('')}</tr></tbody>
+      </table>
+      <div class="pd-fine">単位: 時間/月</div>`;
+      })() : ''}
 
       ${sec.calendar && (u.calendarInspections || []).length > 0 ? `
       <div class="pd-sec-title">定期点検（時期基準）</div>
@@ -4412,6 +4467,8 @@ function openPlanDocModal(customerId, unitId, variant) {
         <span class="text-[11px] text-[color:var(--ink-muted)]">記載する項目：</span>
         ${[
           ['schedule', '今後の点検予定'],
+          ['history', '点検実施履歴'],
+          ['monthly', '月別稼働実績'],
           ['calendar', '定期点検（時期基準）'],
           ['demand', '点検時の受電電力'],
         ].map(([key, label]) => `
@@ -9671,6 +9728,10 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '1.89', items: [
+    'お客様向けの点検計画書に「点検実施履歴」を追加（実施日・点検・実施時運転時間・前回からの間隔。編集ボタンや内部警告なし、プラグ先行交換は非表示、スケジュールの「過去」設定に連動）',
+    '同じく「月別稼働実績」を追加（入力済みの直近12ヶ月のみの表。未入力の月は出しません）。記載項目のチェックでお客様ごとにオン/オフできます',
   ]},
   { v: '1.88.4', items: [
     '繰り延べ先の点検の種別が、交互判定前の素の「B」で表示されていたのを修正。繰り延べ先の枠で解決したB1/B2が表示されます',
