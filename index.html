@@ -862,7 +862,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.88.2-clamp-legend</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.88.3-hist-gap</span></div>
         </div>
       </div>
     </div>
@@ -1170,7 +1170,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.88.2-clamp-legend';
+const VERSION = '1.88.3-hist-gap';
 
 // ---------- default state ----------
 // ============================================================
@@ -9066,6 +9066,26 @@ function renderInspectionHistory(c, u) {
     el.innerHTML = `<div class="p-6"><div class="empty-state">点検履歴がありません。</div></div>`;
     return;
   }
+  // Interval from the previous scheduled inspection. PLUG-only and ad-hoc
+  // OTHER entries don't reset the clock — same rule as the interval window.
+  // The EXPECTED gap comes from the positions the two records actually filled
+  // (shift-aware), so a widened per-unit cycle doesn't false-flag.
+  const clock = [...(u.inspectionHistory || [])]
+    .filter(h => h.type !== 'OTHER' && h.type !== 'PLUG' && h.atHours != null && !isNaN(h.atHours))
+    .sort((a, b) => a.atHours - b.atHours);
+  const histPlan = safeCall(() => computeUnitPlan(c, u), null);
+  const hsPos = (histPlan && histPlan.histShifts) || {};
+  const posOf = (h) => h.nominalHours != null
+    ? (hsPos[h.nominalHours] != null ? hsPos[h.nominalHours] : h.nominalHours) : null;
+  const tolH = state.settings.intervalToleranceHours != null ? state.settings.intervalToleranceHours : 200;
+  const stepH = getMakerStep(u.maker) || 2000;
+  const gapById = new Map();
+  for (let i = 1; i < clock.length; i++) {
+    const gap = Math.round(clock[i].atHours - clock[i - 1].atHours);
+    const p1 = posOf(clock[i - 1]), p2 = posOf(clock[i]);
+    const expected = (p1 != null && p2 != null && p2 > p1) ? (p2 - p1) : stepH;
+    gapById.set(clock[i].id, { gap, over: gap > expected + tolH });
+  }
   el.innerHTML = `
     <table class="data-table" style="width:100%; table-layout: fixed;">
       <thead>
@@ -9074,6 +9094,7 @@ function renderInspectionHistory(c, u) {
           <th class="text-right" style="width: 100px;">通常位置</th>
           <th style="width: 90px;">点検</th>
           <th class="text-right" style="width: 120px;">実施時 運転時間</th>
+          <th class="text-right" style="width: 90px;" title="1つ前の点検（プラグ先行交換・その他を除く）からの実施間隔。位置どうしの規定間隔＋許容を超えると ⚠">前回から</th>
           <th class="text-right" style="width: 90px;">ズレ</th>
           <th style="width: auto;">メモ</th>
           <th style="width: 110px;"></th>
@@ -9097,6 +9118,11 @@ function renderInspectionHistory(c, u) {
             ${nominalCell}
             <td><span class="tag tag-${r.type}">${inspTypeLabel(r.type)}</span></td>
             <td class="text-right font-mono">${fmtHours(r.atHours)} h</td>
+            ${(() => {
+              const g = gapById.get(r.id);
+              if (!g) return '<td class="text-right font-mono text-[11px] text-[color:var(--ink-muted)]">—</td>';
+              return `<td class="text-right font-mono ${g.over ? '' : 'text-[color:var(--ink-soft)]'}" ${g.over ? 'style="color: var(--red); font-weight: 700;" title="規定間隔＋許容を超えています"' : ''}>${fmtHours(g.gap)} h${g.over ? ' ⚠' : ''}</td>`;
+            })()}
             ${diffCell}
             <td class="text-[13px] text-[color:var(--ink-soft)]">${escapeHtml(r.note || '')}</td>
             <td>
@@ -9631,6 +9657,9 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '1.88.3', items: [
+    '点検実施履歴に「前回から」列を追加。1つ前の点検からの実施間隔を表示し、規定間隔＋許容を超えた行には ⚠ を付けます（プラグ先行交換・その他は間隔の時計に含めません。OH後+1,000h点検の隣接や号機ごとの周期調整も正しく判定）',
   ]},
   { v: '1.88.2', items: [
     '過去の点検日の推定が稼働開始日より前（例: 2021年稼働開始の号機で500h点検が2014年）になっていたのを修正。逆算した推定日は稼働開始日で打ち止めにします（まとめて登録の候補・スケジュールの過去行・見送り行すべて）',
