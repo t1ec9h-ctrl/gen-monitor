@@ -862,7 +862,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.88.1-bulk-handover</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.88.2-clamp-legend</span></div>
         </div>
       </div>
     </div>
@@ -1170,7 +1170,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.88.1-bulk-handover';
+const VERSION = '1.88.2-clamp-legend';
 
 // ---------- default state ----------
 // ============================================================
@@ -3604,7 +3604,7 @@ function computeUnitPlanUncached(customer, unit, opts = {}) {
     // between. Judge by the grid position and date it from history instead.
     const alreadyPassed = nominal <= (current.hours - offset) || plannedHours <= current.hours;
     let d = alreadyPassed
-      ? (safeCall(() => estimateDateForPastHours(new Date(current.ts), current.hours, Math.min(plannedHours, current.hours), model), null) || new Date(current.ts))
+      ? clampToCommission(unit, (safeCall(() => estimateDateForPastHours(new Date(current.ts), current.hours, Math.min(plannedHours, current.hours), model), null) || new Date(current.ts)))
       : predictDateForHours(new Date(current.ts), current.hours, plannedHours, model);
     if (!d) d = predictDateForHours(new Date(current.ts), current.hours, plannedHours, model);
     if (!d) break;
@@ -7994,7 +7994,7 @@ function renderScheduleTable(c, u, plan) {
     const skAt = sk.nominalHours + skOff;
     const d = plan.current && plan.model
       ? (skAt <= plan.current.hours
-          ? (safeCall(() => estimateDateForPastHours(new Date(plan.current.ts), plan.current.hours, skAt, plan.model), null) || new Date(plan.current.ts))
+          ? clampToCommission(u, (safeCall(() => estimateDateForPastHours(new Date(plan.current.ts), plan.current.hours, skAt, plan.model), null) || new Date(plan.current.ts)))
           : predictDateForHours(new Date(plan.current.ts), plan.current.hours, skAt, plan.model))
       : null;
     rows.push({ type: sk.type, hours: sk.nominalHours, nominalHours: sk.nominalHours,
@@ -9632,6 +9632,10 @@ const CHANGELOG = [
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
   ]},
+  { v: '1.88.2', items: [
+    '過去の点検日の推定が稼働開始日より前（例: 2021年稼働開始の号機で500h点検が2014年）になっていたのを修正。逆算した推定日は稼働開始日で打ち止めにします（まとめて登録の候補・スケジュールの過去行・見送り行すべて）',
+    '受電データの貼り付けフォーマット説明を現行のエクスポート形式（年月日 時／受電電力量／発電電力量）主体に書き直し。旧形式も引き続きそのまま貼り付け可能です',
+  ]},
   { v: '1.88.1', items: [
     '物件一覧に「まとめて書き出す」を追加。複数の物件をチェックして1つのファイルに書き出せます（使用中の機種カタログと計算設定を同梱）',
     '「物件データを取り込む」がまとめ書き出しファイルにも対応。一覧を確認して「すべて取り込む（同名は置き換え）／すべて別物件として取り込む」を選べます。カタログは受け取り側に無い機種だけ追加（既存の調整は保護）',
@@ -11173,6 +11177,16 @@ function openInspectionModal(customerId, unitId, inspId) {
 // passed a lower hour value. Mirror of predictDateForHours, used to pre-fill
 // plausible dates for past inspections the user hasn't recorded yet.
 // Returns a Date, or null if we have no usable operation model.
+// A machine cannot have run before it existed. The backward walk uses the
+// monthly pace, and on a lightly-used unit it overshoots commissioning by
+// years — a 500h check came out "estimated 2014" on a unit commissioned 2021.
+// Every backward estimate is clamped to the commissioning date.
+function clampToCommission(unit, d) {
+  if (!d || !unit || !unit.commissionDate) return d;
+  const cd = new Date(unit.commissionDate);
+  return (!isNaN(cd.getTime()) && d < cd) ? cd : d;
+}
+
 function estimateDateForPastHours(startDate, startHours, targetHours, model) {
   if (targetHours >= startHours) return startDate;
   if (!model || !model.fallback) return null;
@@ -11247,9 +11261,9 @@ function findUnrecordedPastInspections(c, u) {
     // The date estimate walks back through actual hours, so convert the nominal
     // position to the hours the machine had actually run at that point.
     const actualAt = ms.hours + off;
-    const estDate = estimateDateForPastHours(
+    const estDate = clampToCommission(u, estimateDateForPastHours(
       new Date(anchorTs), anchorHours, Math.min(actualAt, anchorHours), model
-    );
+    ));
     out.push({
       nominalHours: ms.hours,
       type: ms.type,
@@ -13069,17 +13083,16 @@ function openHourlyPowerModal(customerId) {
         <!-- フォーマット説明 -->
         <div class="hairline rounded p-4" style="background: var(--surface-2);">
           <div class="font-semibold text-sm mb-2">📋 貼り付けフォーマット</div>
-          <div class="text-xs text-[color:var(--ink-soft)] mb-2">以下のようなタブ区切りデータをそのまま貼り付けてください。Excel / 計装トレンドからのコピペ対応。</div>
-          <div class="font-mono text-[11px] p-3 rounded" style="background: var(--surface); border: 1px solid var(--border); line-height: 1.5; white-space: pre;">タグ名称  受電電力  発電1  発電2  ...
-時間      kW        kW     kW     ...
-2025/4/21 1:00  445   500   200
-2:00            425   480   210
-3:00            416   470   200
-2025/4/22 0:00  500   450   180
-...</div>
+          <div class="text-xs text-[color:var(--ink-soft)] mb-2">Excelの範囲コピー（ヘッダーごと）をそのまま貼り付けてください。現在のエクスポートはこの形です：</div>
+          <div class="font-mono text-[11px] p-3 rounded" style="background: var(--surface); border: 1px solid var(--border); line-height: 1.5; white-space: pre;">年月日 時	受電電力量 kWh	発電電力量 kWh
+20250801 00	2370	0
+20250801 01	2320	0
+20250801 08	2810	14
+20250801 09	2760	395</div>
           <div class="text-[11px] text-[color:var(--ink-muted)] mt-2 space-y-1">
-            <div>・ <strong>1〜2列目</strong>：ヘッダー行（自動スキップ）</div>
-            <div>・ <strong>3列目以降が発電</strong>：発電1, 発電2, ... と複数台OK（ユニット編集で「発電カラム番号」を指定）</div>
+            <div>・ <strong>ヘッダー行</strong>：自動スキップ（1〜2行）</div>
+            <div>・ <strong>2列目＝受電、3列目以降＝発電</strong>：発電1, 発電2, ... と複数台OK（ユニット編集で「発電カラム番号」を指定）</div>
+            <div>・ <strong>旧形式もそのまま可</strong>：<span class="font-mono">タグ名称/時間</span> ヘッダーの計装トレンド、<span class="font-mono">2:00</span> だけの時刻行（前行の日付を継承）など</div>
             <div>・ <strong>日時の書式</strong>：<span class="font-mono">20250801 00</span> / <span class="font-mono">20250801 0000</span> / <span class="font-mono">2025/8/1 0:00</span> いずれも可</div>
             <div>・ <strong>日付省略</strong>：前の行の日付を継承。0:00で次の日にロールオーバー</div>
             <div>・ <strong>24時表記</strong>：<span class="font-mono">20250801 24</span> は翌日 0:00 として取り込みます</div>
