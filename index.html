@@ -861,7 +861,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.87.3-window-gap</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.87.4-plug-cap</span></div>
         </div>
       </div>
     </div>
@@ -1169,7 +1169,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.87.3-window-gap';
+const VERSION = '1.87.4-plug-cap';
 
 // ---------- default state ----------
 // ============================================================
@@ -4581,9 +4581,16 @@ function computeIntervalWindow(c, u, precomputedPlan) {
   const plugLimit = plugBaseHours + plugLife + tol;
   const plugExplicit = !!plugRec;
 
+  // A plug deadline the machine has ALREADY run past can't cap the future
+  // window — no choice of inspection date satisfies it, so letting it bind
+  // produced an "upper limit" below the previous inspection and flagged every
+  // possible date as over. The overrun is real, but it's a plug problem to
+  // surface on its own (交換超過), not the next inspection's ceiling.
+  const plugOverdue = plugLimit <= Math.max(lastHours, anchorHours);
   // Whichever runs out first is the real ceiling
-  const hardLimit = Math.min(inspLimit, plugLimit);
-  const binding = plugLimit < inspLimit ? 'plug' : (plugLimit > inspLimit ? 'inspection' : 'both');
+  const hardLimit = plugOverdue ? inspLimit : Math.min(inspLimit, plugLimit);
+  const binding = plugOverdue ? 'inspection'
+    : plugLimit < inspLimit ? 'plug' : (plugLimit > inspLimit ? 'inspection' : 'both');
 
   // 推奨実施点 = 通常位置と絶対上限の早い方。
   //  - 通常位置が上限以内なら通常位置で実施 → 規定どおりの時期に戻せるる
@@ -4674,7 +4681,7 @@ function computeIntervalWindow(c, u, precomputedPlan) {
     ideal, windowMin,
     hardLimit: byMonthsRule ? recommendHours : hardLimit,
     windowMax: byMonthsRule ? recommendHours : hardLimit, gap, verdict,
-    plugLife, plugRec, plugBaseHours, plugLimit, plugExplicit, inspLimit, binding,
+    plugLife, plugRec, plugBaseHours, plugLimit, plugExplicit, plugOverdue, inspLimit, binding,
     next, nextNominal, nextIsPlanned: next.source === 'planned',
     // The grid position's own arrival date. next.date is the offset-carried
     // prediction, which is a different number of hours — pairing it with the
@@ -6391,13 +6398,13 @@ function renderUnitDetail(root) {
 
   // Simulation slider bounds (only if we have a first predicted inspection)
   const firstPred = plan.predicted[0];
-  let simDefault = null, simMin = null, simMax = null, simHardLimit = null, simNominal = null, simLimitNote = '';
+  let simDefault = null, simMin = null, simMax = null, simHardLimit = null, simNominal = null, simLimitNote = '', wSim = null;
   if (firstPred && current) {
     const step = getMakerStep(u.maker);
     simNominal = Math.round(firstPred.hours);
     // Default to the RECOMMENDED execution point, not the nominal slot — otherwise
     // the simulator opens on a value the window card just flagged as too late.
-    const wSim = safeCall(() => computeIntervalWindow(c, u, plan), null);
+    wSim = safeCall(() => computeIntervalWindow(c, u, plan), null);
     simHardLimit = wSim && wSim.hasLast ? Math.round(wSim.hardLimit) : null;
     simLimitNote = wSim && wSim.hasLast
       ? (wSim.binding === 'plug'
@@ -7049,6 +7056,10 @@ function renderUnitDetail(root) {
           ${simHardLimit != null ? `
           <div id="simLimitWarn" class="hairline rounded px-3 py-2 mb-3" style="display: none; background: #FEE2E2; color: #991B1B; font-size: 12px;"></div>
           ` : ''}
+          ${wSim && wSim.hasLast && wSim.plugOverdue ? `
+          <div class="hairline rounded px-3 py-2 mb-3" style="background: #FEF3C7; color: #92400E; font-size: 12px;">
+            ⚠ プラグ交換期限 ${fmtHours(Math.round(wSim.plugLimit))}h（前回交換 ${fmtHours(Math.round(wSim.plugBaseHours))}h ＋ 寿命 ${fmtHours(wSim.plugLife)}h ＋ 許容 ${wSim.tol}h）を既に超えています。次回点検での交換をおすすめします。この期限は次回点検の上限には使いません。
+          </div>` : ''}
 
           <!-- Large current value display + date -->
           <div class="grid grid-cols-2 gap-4 mb-3">
@@ -7687,8 +7698,11 @@ function handleSimChange(val, source, userDateStr) {
       const over = Math.round(hours - wChk.hardLimit);
       const interval = Math.round(hours - wChk.lastHours);
       warnEl.style.display = '';
+      const why = wChk.binding === 'plug'
+        ? `プラグ交換期限（前回交換 ${fmtHours(Math.round(wChk.plugBaseHours))}h ＋ 寿命 ${fmtHours(wChk.plugLife)}h ＋ 許容 ${wChk.tol}h）`
+        : `次までの間隔 ${fmtHours(wChk.step)}h ＋ 許容 ${wChk.tol}h`;
       warnEl.innerHTML = `⚠ <strong>上限超過</strong>：前回実施 ${fmtHours(wChk.lastHours)}h から ${fmtHours(interval)}h 空きます。
-        上限 ${fmtHours(wChk.hardLimit)}h（規定${fmtHours(wChk.step)}h + 許容${wChk.tol}h）を <strong>${fmtHours(over)}h</strong> 超えています。`;
+        上限 ${fmtHours(wChk.hardLimit)}h（${why}）を <strong>${fmtHours(over)}h</strong> 超えています。`;
     } else {
       warnEl.style.display = 'none';
     }
@@ -9582,6 +9596,10 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '1.87.4', items: [
+    '既に通り過ぎたプラグ交換期限が次回点検の上限として扱われ、上限が前回実施より小さい値（例: 20,547h）になって全選択が超過警告になっていたのを修正。過ぎた期限は上限から外し、「プラグ交換期限を超えています。次回点検で交換を」という独立の注意表示に',
+    '上限超過の警告文を、実際に効いている制約（点検間隔／プラグ期限）の内訳で表示するように（従来はプラグ期限でも「規定+許容」と表示され、数字が合わなかった）',
   ]},
   { v: '1.87.3', items: [
     '「次回点検はいつまでに」とシミュレーションの上限計算を修正。全機種一律のstepではなく、前回点検の実施位置から次の点検の位置までの実距離で判定します。OH後の+1,000h点検が絡む区間で上限が1,000h過大（危険側）だったのを解消し、号機ごとの周期調整にも追従します',
