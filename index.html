@@ -861,7 +861,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.87.2-grid-snap</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.87.3-window-gap</span></div>
         </div>
       </div>
     </div>
@@ -1169,7 +1169,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.87.2-grid-snap';
+const VERSION = '1.87.3-window-gap';
 
 // ---------- default state ----------
 // ============================================================
@@ -4534,6 +4534,18 @@ function computeIntervalWindow(c, u, precomputedPlan) {
       : (period - prevPos) + nextPos;
     if (gapFromList > 0) step = gapFromList;
   }
+  // For a grid cycle the applicable interval is likewise the distance between
+  // the previous inspection's POSITION and the next one's — one global step
+  // overstates the ceiling by 1,000h whenever an off-step check (OH後の
+  // +1,000h A) sits on either side, and understates it when a per-unit
+  // adjustment widens the cycle. Positions, not names: a record whose slot
+  // was skipped before it fills the lower position (histShifts).
+  else if (last && last.nominalHours != null && next.nominalHours != null) {
+    const hsMap = (plan.histShifts || {});
+    const lastPos = hsMap[last.nominalHours] != null ? hsMap[last.nominalHours] : last.nominalHours;
+    const gapPos = next.nominalHours - lastPos;
+    if (gapPos > 0) step = gapPos;
+  }
   const ideal = lastHours + step;          // 規定周期ちょうど
   const windowMin = ideal - tol;           // これより早いとグリッド復帰目的以外では早すぎ
   const inspLimit = ideal + tol;           // 点検間隔から見た上限
@@ -6379,7 +6391,7 @@ function renderUnitDetail(root) {
 
   // Simulation slider bounds (only if we have a first predicted inspection)
   const firstPred = plan.predicted[0];
-  let simDefault = null, simMin = null, simMax = null, simHardLimit = null, simNominal = null;
+  let simDefault = null, simMin = null, simMax = null, simHardLimit = null, simNominal = null, simLimitNote = '';
   if (firstPred && current) {
     const step = getMakerStep(u.maker);
     simNominal = Math.round(firstPred.hours);
@@ -6387,6 +6399,11 @@ function renderUnitDetail(root) {
     // the simulator opens on a value the window card just flagged as too late.
     const wSim = safeCall(() => computeIntervalWindow(c, u, plan), null);
     simHardLimit = wSim && wSim.hasLast ? Math.round(wSim.hardLimit) : null;
+    simLimitNote = wSim && wSim.hasLast
+      ? (wSim.binding === 'plug'
+          ? `プラグ交換期限で決まる上限`
+          : `前回実施 ${fmtHours(Math.round(wSim.lastHours))}h ＋ 次までの間隔 ${fmtHours(wSim.step)}h ＋ 許容 ${fmtHours(wSim.tol)}h`)
+      : '';
     simDefault = wSim && wSim.hasLast ? Math.round(wSim.recommendHours) : simNominal;
     simMin = Math.max(Math.round(current.hours) + 50, simDefault - step);
     simMax = Math.max(simNominal, simDefault) + step;
@@ -7027,7 +7044,7 @@ function renderUnitDetail(root) {
           <div class="text-xs text-[color:var(--ink-muted)] mb-3">
             次回点検を何時間（または何月何日）で実施するか仮定できます。以降のスケジュールが再計算されます。<br>
             初期値は上の「次回点検はいつまでに」で算出した<strong style="color: var(--ink);">推奨実施 ${fmtHours(simDefault)}h</strong> です。
-            ${simHardLimit != null ? `上限は <strong style="color: var(--red);">${fmtHours(simHardLimit)}h</strong>（前回実施からの規定+許容）。` : ''}
+            ${simHardLimit != null ? `上限は <strong style="color: var(--red);">${fmtHours(simHardLimit)}h</strong>（${simLimitNote}）。` : ''}
           </div>
           ${simHardLimit != null ? `
           <div id="simLimitWarn" class="hairline rounded px-3 py-2 mb-3" style="display: none; background: #FEE2E2; color: #991B1B; font-size: 12px;"></div>
@@ -9565,6 +9582,10 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '1.87.3', items: [
+    '「次回点検はいつまでに」とシミュレーションの上限計算を修正。全機種一律のstepではなく、前回点検の実施位置から次の点検の位置までの実距離で判定します。OH後の+1,000h点検が絡む区間で上限が1,000h過大（危険側）だったのを解消し、号機ごとの周期調整にも追従します',
+    'シミュレーションの上限に内訳（前回実施＋次までの間隔＋許容）を表示',
   ]},
   { v: '1.87.2', items: [
     '初回点検（500hなど周期の刻みに乗らない位置）を通常種別で記録している号機で、以降の点検が1件も算出されなくなっていたのを修正。マイルストーン生成の開始位置を周期の格子に吸着させました（「今後の点検を算出できていません」の一因）',
