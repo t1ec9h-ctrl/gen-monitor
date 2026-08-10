@@ -552,6 +552,7 @@ table.data-table tr.row-clickable { cursor: pointer; }
      sliders, filter chips, scroll containers. On paper those are dead weight
      that pushes the actual content off the sheet, so they go. */
   header, .nav-tab, nav,
+  [data-sec="setup"],
   #staleBanner, #syncStatusBar,
   button, .btn,
   input, select, textarea,
@@ -861,7 +862,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.87.5-plug-flag</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.88.0-print-fit</span></div>
         </div>
       </div>
     </div>
@@ -1169,7 +1170,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.87.5-plug-flag';
+const VERSION = '1.88.0-print-fit';
 
 // ---------- default state ----------
 // ============================================================
@@ -6910,8 +6911,8 @@ function renderUnitDetail(root) {
                     : `${fmtHours(w.plugBaseHours)}h（前回点検時に交換したものとして計算）`}
                 </div>
               </div>
-              <div style="position: relative; height: 8px; background: #EDEBE3; border-radius: 4px; overflow: hidden;">
-                <div style="position: absolute; left: 0; top: 0; bottom: 0; width: ${Math.min(100, pct)}%; background: ${col};"></div>
+              <div style="height: 8px; background: #EDEBE3; border-radius: 4px; overflow: hidden; -webkit-print-color-adjust: exact; print-color-adjust: exact;">
+                <div style="height: 8px; width: ${Math.min(100, pct)}%; background: ${col}; border-radius: 4px; -webkit-print-color-adjust: exact; print-color-adjust: exact;"></div>
               </div>
               <div class="flex items-baseline justify-between gap-2 mt-1.5 flex-wrap">
                 <div class="font-mono text-xs" style="color: ${col}; font-weight: 700;">
@@ -7042,6 +7043,11 @@ function renderUnitDetail(root) {
         </div>
         <div class="flex items-center gap-3 flex-wrap">
           ${sortToggleButton('schedule')}
+          <label class="text-[11px] font-mono text-[color:var(--ink-muted)] tracking-wider" data-tip="実施済み・通過済みの行をどこまで遡って表示するか。印刷のページ数を抑えたいときにも有効です">過去</label>
+          <select class="select" style="width: auto; padding: 3px 8px; font-size: 12px;" onchange="setSchedPastYears(this.value)">
+            ${[[0, 'すべて'], [1, '1年'], [2, '2年'], [3, '3年'], [5, '5年']].map(([v, l]) =>
+              `<option value="${v}" ${(state.settings.schedPastYears || 0) === v ? 'selected' : ''}>${l}</option>`).join('')}
+          </select>
           <label class="text-[11px] font-mono text-[color:var(--ink-muted)] tracking-wider">予測範囲</label>
           <input id="yearsSlider" type="range" min="1" max="20" value="${state.settings.predictionYears}" oninput="handleYearsChange(this.value)" style="width: 150px;">
           <span class="font-mono text-xs" id="yearsSliderVal">${state.settings.predictionYears}年</span>
@@ -7051,7 +7057,7 @@ function renderUnitDetail(root) {
 
       ${firstPred ? `
       <!-- Simulation area -->
-      <details class="mx-5 my-4" style="border: 1px solid var(--border); border-radius: 3px;">
+      <details class="mx-5 my-4 no-print" style="border: 1px solid var(--border); border-radius: 3px;">
         <summary style="padding: 10px 14px; cursor: pointer; list-style: none; display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; background: var(--surface-2);">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
           次回点検シミュレーション
@@ -7906,6 +7912,12 @@ function commitSimAsPlan(customerId, unitId) {
   showPage('unit-detail');
 }
 
+function setSchedPastYears(val) {
+  state.settings.schedPastYears = parseInt(val, 10) || 0;
+  saveState();
+  showPageKeepingScroll('unit-detail');
+}
+
 function handleYearsChange(v) {
   state.settings.predictionYears = parseInt(v, 10);
   document.getElementById('yearsSliderVal').textContent = `${v}年`;
@@ -7923,7 +7935,7 @@ function renderScheduleTable(c, u, plan) {
   const el = document.getElementById('schedTable');
   const offset = plan.offsetInfo ? plan.offsetInfo.offset : 0;
   // combine planned (user-entered), predicted (future), and history (past)
-  const rows = [];
+  let rows = [];
   for (const p of plan.planned) {
     rows.push({ type: p.type, hours: p.atHours, nominalHours: p.nominalHours != null ? p.nominalHours : null, date: new Date(p.date), source: 'planned', note: p.note, planId: p.id });
   }
@@ -8061,6 +8073,17 @@ function renderScheduleTable(c, u, plan) {
   const filterKey = `${c.id}_${u.id}`;
   const filter = window._scheduleFilter[filterKey] || 'all'; // 'all' | 'past' | 'future'
 
+  // Past horizon from settings: a machine with a decade of records prints and
+  // scrolls its whole life by default. Future rows are never cut here.
+  const pastYears = state.settings.schedPastYears || 0;
+  let pastCutCount = 0;
+  if (pastYears > 0) {
+    const cutoff = new Date(now.getTime() - pastYears * 365 * 86400000);
+    const before = rows.length;
+    rows = rows.filter(r => r.date >= cutoff || r.date >= now);
+    pastCutCount = before - rows.length;
+  }
+
   let filteredRows = rows.filter(r => {
     if (filter === 'past') return r.date < now;
     if (filter === 'future') return r.date >= now;
@@ -8096,6 +8119,7 @@ function renderScheduleTable(c, u, plan) {
   el.innerHTML = `
     <div class="px-5 pt-3 pb-2 flex items-center gap-2 flex-wrap">
       <div class="text-xs text-[color:var(--ink-muted)] mr-2">表示：</div>
+      ${pastCutCount > 0 ? `<span class="chip" style="font-size: 10px;" data-tip="ヘッダーの「過去」で表示範囲を変えられます">過去${state.settings.schedPastYears}年より前 ${pastCutCount}件を省略</span>` : ''}
       <button class="btn btn-xs ${filter==='all'?'btn-accent':''}" onclick="setScheduleFilter('${c.id}','${u.id}','all')">
         全て <span class="text-[10px] text-[color:var(--ink-muted)]">${rows.length}</span>
       </button>
@@ -9606,6 +9630,11 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '1.88', items: [
+    '点火プラグ使用状況の緑バーが印刷で消えていたのを修正（塗りの構造を印刷エンジンに強い形に変更し、色の保持を直接指定）',
+    '点検スケジュールに「過去」の表示範囲（すべて/1〜5年）を追加。省略した件数はチップで表示され、画面も印刷もその範囲だけになります',
+    '印刷時にシミュレーション・SETUPチェックリスト・号機調整パネルなどの操作用UIを自動で除外し、ページ数を削減',
   ]},
   { v: '1.87.5', items: [
     '旧バージョンで登録した点検記録の「点火プラグを交換した」が、画面ではチェック済みに見えるのにプラグ時計に反映されていなかったのを修正。チェックを外していない記録は交換扱いになり、プラグ期限が直近の点検から正しく進みます（種別「その他」「初回」は明示チェック時のみ）',
@@ -16864,7 +16893,7 @@ function renderCycleAdjustPanel(c, u) {
   const ivs = adj.intervals || {};
   const has = (adj.exclude || []).length > 0 || Object.keys(ivs).length > 0;
   return `
-  <details class="hairline rounded" ${has ? 'open' : ''} style="background: var(--surface-2);">
+  <details class="hairline rounded no-print" ${has ? 'open' : ''} style="background: var(--surface-2);">
     <summary class="px-3 py-2 text-xs cursor-pointer font-semibold" data-tip="カタログを複製せずに、この号機だけ点検種別のオン/オフや周期を変えられます。ここで変えていない部分は、基準カタログを直せばこの号機にもそのまま反映されます">
       この号機だけの調整
       ${has
