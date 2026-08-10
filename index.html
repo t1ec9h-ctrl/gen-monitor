@@ -862,7 +862,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.1-plan-chain</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.2-request-doc</span></div>
         </div>
       </div>
     </div>
@@ -1170,7 +1170,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.89.1-plan-chain';
+const VERSION = '1.89.2-request-doc';
 
 // ---------- default state ----------
 // ============================================================
@@ -4303,8 +4303,18 @@ function buildMakerDocForUnit(c, u) {
     .sort((a, b) => new Date(b.date) - new Date(a.date));
   const lastInsp = hist[0] || null;
 
-  const next = sched[0] || null;
-  const later = sched.slice(1, 6);
+  // A slot the user has already BOOKED is the thing this document requests.
+  // The recommendation list deliberately excludes booked slots, so its first
+  // entry is the one AFTER the booking — which paired a 52,000h 実施可能期間
+  // (window follows the booking) with a 54,000h date on the same sheet.
+  const bookedNext = (u.inspectionPlanned || [])
+    .filter(pl => pl.date && !isNaN(new Date(pl.date)) && new Date(pl.date).getTime() >= Date.now() - 86400000)
+    .sort((a, b) => new Date(a.date) - new Date(b.date))[0] || null;
+  const next = bookedNext
+    ? { nominalHours: bookedNext.nominalHours, type: bookedNext.type,
+        date: new Date(bookedNext.date), execHours: bookedNext.atHours, booked: true }
+    : (sched[0] || null);
+  const later = sched.slice(bookedNext ? 0 : 1, bookedNext ? 5 : 6);
   const ymLabel = (d) => d ? `${d.getFullYear()}年${d.getMonth() + 1}月` : '—';
   const nameOf = (nominalHours, type) => {
     const letter = type && !['OTHER', 'initial', 'PLUG'].includes(type) ? `${inspTypeLabel(type)}点検` : '';
@@ -4362,8 +4372,8 @@ function buildMakerDocForUnit(c, u) {
             </td>
           </tr>
           <tr>
-            <th>希望時期</th>
-            <td class="pd-strong" style="font-size:15px;">${fmtDate(next.date)} 頃
+            <th>${next.booked ? '予定日（登録済み）' : '希望時期'}</th>
+            <td class="pd-strong" style="font-size:15px;">${fmtDate(next.date)}${next.booked ? '' : ' 頃'}
               <div style="font-weight:400; font-size:11px;">運転時間 約 ${fmtHours(next.execHours)} h 到達見込み</div>
             </td>
           </tr>
@@ -9736,6 +9746,9 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '1.89.2', items: [
+    '点検依頼書: スケジュール登録済みの点検があるときは、その点検を依頼対象として表示するように（従来は登録済みを飛ばして次の枠＝54,000h側の日程が出ていました）。日付欄は「予定日（登録済み）」と明記し、以降の見込み一覧はその次の点検から続きます',
   ]},
   { v: '1.89.1', items: [
     '点検の予定を登録すると、その次の点検の予測が本来の位置を大きく通り越す（例: 52,000h点検が54,098hに）ことがあったのを修正。予定を「前回」として引き継ぐ際に格子上の位置も一緒に進めるようにしました（従来は実時間だけ進み、次との間隔が二重計上されていました）',
