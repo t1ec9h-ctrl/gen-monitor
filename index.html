@@ -861,7 +861,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.87.4-plug-cap</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.87.5-plug-flag</span></div>
         </div>
       </div>
     </div>
@@ -1169,7 +1169,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.87.4-plug-cap';
+const VERSION = '1.87.5-plug-flag';
 
 // ---------- default state ----------
 // ============================================================
@@ -4434,7 +4434,17 @@ function plugLifeFor(unit) {
 }
 
 function isPlugResetEntry(h) {
-  return h && (h.type === 'PLUG' || h.plugReplaced === true);
+  if (!h) return false;
+  if (h.type === 'PLUG' || h.plugReplaced === true) return true;
+  if (h.plugReplaced === false) return false;
+  // Records saved before the plug flag existed carry no field at all. The edit
+  // modal has always rendered these as CHECKED (plugReplaced !== false), so the
+  // clock must read them the same way — otherwise it silently anchors on some
+  // ancient explicit PLUG record while every record on screen says the plugs
+  // were replaced. Undefined counts as replaced for scheduled inspection
+  // types; ad-hoc OTHER and initial entries stay neutral unless explicitly
+  // flagged.
+  return h.type !== 'OTHER' && h.type !== 'initial';
 }
 
 // Latest plug change on record, or null when nothing explicit was logged
@@ -9596,6 +9606,9 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '1.87.5', items: [
+    '旧バージョンで登録した点検記録の「点火プラグを交換した」が、画面ではチェック済みに見えるのにプラグ時計に反映されていなかったのを修正。チェックを外していない記録は交換扱いになり、プラグ期限が直近の点検から正しく進みます（種別「その他」「初回」は明示チェック時のみ）',
   ]},
   { v: '1.87.4', items: [
     '既に通り過ぎたプラグ交換期限が次回点検の上限として扱われ、上限が前回実施より小さい値（例: 20,547h）になって全選択が超過警告になっていたのを修正。過ぎた期限は上限から外し、「プラグ交換期限を超えています。次回点検で交換を」という独立の注意表示に',
