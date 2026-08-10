@@ -862,7 +862,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.88.0-print-fit</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.88.1-bulk-handover</span></div>
         </div>
       </div>
     </div>
@@ -1170,7 +1170,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.88.0-print-fit';
+const VERSION = '1.88.1-bulk-handover';
 
 // ---------- default state ----------
 // ============================================================
@@ -9437,6 +9437,7 @@ function renderDataPage(root) {
               物件単位でのやり取りに使います。書き出しは各顧客の詳細画面から。
             </div>
             <button class="btn btn-sm" onclick="openImportCustomerModal()">📥 物件データを取り込む</button>
+            <button class="btn btn-sm" onclick="openBulkExportModal()" data-tip="複数の物件を選んで1つのファイルに書き出します。機種カタログと計算設定も同梱され、引き継ぎ先で同じ予測になります">📤 まとめて書き出す</button>
           </div>
           <div class="hairline-t pt-4">
             <div class="field-label">最終バックアップ</div>
@@ -9630,6 +9631,10 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '1.88.1', items: [
+    '物件一覧に「まとめて書き出す」を追加。複数の物件をチェックして1つのファイルに書き出せます（使用中の機種カタログと計算設定を同梱）',
+    '「物件データを取り込む」がまとめ書き出しファイルにも対応。一覧を確認して「すべて取り込む（同名は置き換え）／すべて別物件として取り込む」を選べます。カタログは受け取り側に無い機種だけ追加（既存の調整は保護）',
   ]},
   { v: '1.88', items: [
     '点火プラグ使用状況の緑バーが印刷で消えていたのを修正（塗りの構造を印刷エンジンに強い形に変更し、色の保持を直接指定）',
@@ -15856,6 +15861,87 @@ function exportCustomerData(customerId) {
   toast(`✓ ${c.name} を書き出しました（ユニット${(c.units || []).length}台・受電${hp.toLocaleString()}件・履歴${hist}件）\n⚠ お客様情報を含みます。保存先と受け渡し経路にご注意ください`, 'success', 9000);
 }
 
+// Bulk handover: several sites in one file. Same payload shape as the single
+// export, with customers as an array and the cycle set unioned across them.
+function openBulkExportModal() {
+  const list = state.customers || [];
+  if (list.length === 0) { toast('物件が登録されていません', 'error'); return; }
+  openModal(`
+    <div class="modal">
+      <div class="px-6 py-5 hairline-b flex items-center justify-between">
+        <div>
+          <div class="section-title">BULK HANDOVER</div>
+          <div class="section-title-jp">物件をまとめて書き出す</div>
+          <div class="text-xs text-[color:var(--ink-muted)] mt-1">選んだ物件と、その機種カタログ・計算設定を1つのファイルにします</div>
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="closeModal()">×</button>
+      </div>
+      <div class="p-6">
+        <div class="flex gap-2 mb-3">
+          <button class="btn btn-xs" onclick="document.querySelectorAll('.bexp-check').forEach(el => el.checked = true)">全選択</button>
+          <button class="btn btn-xs" onclick="document.querySelectorAll('.bexp-check').forEach(el => el.checked = false)">全解除</button>
+        </div>
+        <div class="space-y-1.5" style="max-height: 320px; overflow-y: auto;">
+          ${list.map(c => `
+            <label class="hairline rounded p-2.5 flex items-center gap-2.5" style="cursor: pointer; background: var(--surface);">
+              <input type="checkbox" class="bexp-check" value="${c.id}" style="cursor: pointer;">
+              <span style="flex: 1; min-width: 0;">
+                <span class="text-sm font-semibold">${escapeHtml(c.name)}</span>
+                <span class="font-mono text-[10px] text-[color:var(--ink-muted)] ml-2">ユニット${(c.units || []).length}台 · 履歴${(c.units || []).reduce((s2, u) => s2 + (u.inspectionHistory || []).length, 0)}件</span>
+              </span>
+            </label>`).join('')}
+        </div>
+      </div>
+      <div class="px-6 py-4 hairline-t flex gap-2 justify-end">
+        <button class="btn" onclick="closeModal()">キャンセル</button>
+        <button class="btn btn-accent" onclick="exportCustomersBulk()">選んだ物件を書き出す</button>
+      </div>
+    </div>
+  `);
+}
+
+function exportCustomersBulk() {
+  const ids = [...document.querySelectorAll('.bexp-check')].filter(el => el.checked).map(el => el.value);
+  const targets = (state.customers || []).filter(c => ids.includes(c.id));
+  if (targets.length === 0) { toast('物件を選択してください', 'error'); return; }
+
+  const usedMakers = new Set();
+  for (const c of targets) for (const u of (c.units || [])) if (u.maker) usedMakers.add(u.maker);
+  const cycles = {};
+  for (const k of usedMakers) {
+    if (state.inspectionCycles && state.inspectionCycles[k]) {
+      cycles[k] = JSON.parse(JSON.stringify(state.inspectionCycles[k]));
+    }
+  }
+  const calcSettings = {
+    intervalToleranceHours: state.settings.intervalToleranceHours,
+    modelYearsWindow: state.settings.modelYearsWindow,
+    fiscalYearStartMonth: state.settings.fiscalYearStartMonth,
+    predictionYears: state.settings.predictionYears,
+    warningDaysRed: state.settings.warningDaysRed,
+    warningDaysYellow: state.settings.warningDaysYellow,
+  };
+  const payload = {
+    type: 'gen-monitor-customers',
+    version: 2,
+    exportedAt: new Date().toISOString(),
+    customers: targets.map(c => ({ ...c, hourlyPower: (c.hourlyPower || []).map(compressHourlyRow) })),
+    inspectionCycles: cycles,
+    calcSettings,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `gen_monitor_handover_${targets.length}sites_${toISODate(new Date())}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  closeModal();
+  toast(`✓ ${targets.length}物件を書き出しました（機種カタログ${Object.keys(cycles).length}件・計算設定を同梱）\n⚠ お客様情報を含みます。保存先と受け渡し経路にご注意ください`, 'success', 9000);
+}
+
 // ============================================================
 //  SECURITY / DATA HANDLING SHEET
 // ============================================================
@@ -16240,6 +16326,36 @@ function previewCustomerImport(input) {
   reader.onload = (ev) => {
     try {
       const data = JSON.parse(ev.target.result);
+      // Bulk handover file: several sites in one payload
+      if (data.type === 'gen-monitor-customers' && Array.isArray(data.customers) && data.customers.length > 0) {
+        window._custImport = data;
+        const rows = data.customers.map(inc => {
+          const dup = state.customers.some(x => x.name === inc.name);
+          return `<div class="hairline rounded p-2.5 flex items-center gap-2" style="background: var(--surface);">
+            <span class="text-sm font-semibold" style="flex:1; min-width:0;">${escapeHtml(inc.name || '(名称なし)')}</span>
+            <span class="font-mono text-[10px] text-[color:var(--ink-muted)]">ユニット${(inc.units || []).length}台 · 履歴${(inc.units || []).reduce((s2, u) => s2 + (u.inspectionHistory || []).length, 0)}件</span>
+            ${dup ? '<span class="chip" style="font-size:9px; background:#FEF3C7; color:#78350F;">同名あり</span>' : ''}
+          </div>`;
+        }).join('');
+        const newCyclesM = Object.keys(data.inspectionCycles || {})
+          .filter(k => !(state.inspectionCycles && state.inspectionCycles[k]));
+        const anyDup = data.customers.some(inc => state.customers.some(x => x.name === inc.name));
+        el.innerHTML = `
+          <div class="text-xs font-semibold mb-2">まとめて書き出されたファイル（${data.customers.length}物件）</div>
+          <div class="space-y-1.5" style="max-height: 260px; overflow-y: auto;">${rows}</div>
+          ${newCyclesM.length > 0 ? `<div class="text-[11px] mt-2" style="color: var(--accent);">機種カタログ ${newCyclesM.length}件を追加します（${newCyclesM.join(', ')}）</div>` : ''}
+          ${data.calcSettings ? `
+          <label class="flex items-center gap-1.5 mt-3 text-[11px]" style="cursor:pointer;">
+            <input type="checkbox" id="custImportAdoptSettings" checked>
+            <span>先方の計算設定を取り込む（他の物件の計算にも影響します）</span>
+          </label>` : ''}
+          <div class="flex gap-2 mt-3 flex-wrap">
+            ${anyDup ? `<button class="btn btn-danger btn-sm" onclick="execCustomerImportMulti('replace')">すべて取り込む（同名は置き換え）</button>` : ''}
+            <button class="btn ${anyDup ? '' : 'btn-accent'} btn-sm" onclick="execCustomerImportMulti('new')">すべて${anyDup ? '別物件として' : ''}取り込む</button>
+          </div>`;
+        input.value = '';
+        return;
+      }
       if (data.type !== 'gen-monitor-customer' || !data.customer) {
         el.innerHTML = `<div class="hairline rounded p-3" style="background:#FEE2E2;color:#991B1B;font-size:12px;">
           物件データのファイルではありません。<br>全体バックアップの復元は「JSON読み込み」を使ってください。</div>`;
@@ -16320,13 +16436,9 @@ function previewCustomerImport(input) {
   reader.readAsText(file);
 }
 
-async function execCustomerImport(mode) {
-  const data = window._custImport;
-  if (!data || !data.customer) return;
-  await takeSnapshot('pre-restore', { silent: true, note: '物件データ取込の直前' });
-
-  // Adopt the sender's calculation settings if the user agreed, so the same
-  // site produces the same dates on both sides
+// Shared pieces of the handover import, used by both the single-site and the
+// bulk paths so the two can't drift apart.
+function _adoptImportSettings(data) {
   const adopt = document.getElementById('custImportAdoptSettings');
   let adopted = 0;
   if (adopt && adopt.checked && data.calcSettings) {
@@ -16334,22 +16446,22 @@ async function execCustomerImport(mode) {
       if (v != null && state.settings[k] !== v) { state.settings[k] = v; adopted++; }
     }
   }
-
-  const inc = JSON.parse(JSON.stringify(data.customer));
-
-  // Decompress hourly rows back to the in-memory shape
-  inc.hourlyPower = (inc.hourlyPower || []).map(decompressHourlyRow);
-
+  return adopted;
+}
+function _mergeImportedCycles(data) {
   // Bring in any cycle definitions we don't already have. Existing ones are left
   // alone — the receiving side may have tuned them, and silently overwriting a
   // colleague's catalog would be worse than a mismatch they can see and fix.
-  if (data.inspectionCycles) {
-    if (!state.inspectionCycles) state.inspectionCycles = {};
-    for (const [k, v] of Object.entries(data.inspectionCycles)) {
-      if (!state.inspectionCycles[k]) state.inspectionCycles[k] = JSON.parse(JSON.stringify(v));
-    }
+  if (!data.inspectionCycles) return;
+  if (!state.inspectionCycles) state.inspectionCycles = {};
+  for (const [k, v] of Object.entries(data.inspectionCycles)) {
+    if (!state.inspectionCycles[k]) state.inspectionCycles[k] = JSON.parse(JSON.stringify(v));
   }
-
+}
+function _importOneCustomer(incRaw, mode) {
+  const inc = JSON.parse(JSON.stringify(incRaw));
+  // Decompress hourly rows back to the in-memory shape
+  inc.hourlyPower = (inc.hourlyPower || []).map(decompressHourlyRow);
   if (mode === 'replace') {
     const idx = state.customers.findIndex(x => x.name === inc.name);
     if (idx >= 0) {
@@ -16373,12 +16485,36 @@ async function execCustomerImport(mode) {
     }
     state.customers.push(inc);
   }
+  return inc.name;
+}
 
+async function execCustomerImport(mode) {
+  const data = window._custImport;
+  if (!data || !data.customer) return;
+  await takeSnapshot('pre-restore', { silent: true, note: '物件データ取込の直前' });
+  const adopted = _adoptImportSettings(data);
+  _mergeImportedCycles(data);
+  const name = _importOneCustomer(data.customer, mode);
   saveState();
   window._custImport = null;
   closeModal();
   showPage('customers');
-  toast(`✓ ${inc.name} を取り込みました${adopted > 0 ? `（計算設定 ${adopted}項目も反映）` : ''}`, 'success', 6000);
+  toast(`✓ ${name} を取り込みました${adopted > 0 ? `（計算設定 ${adopted}項目も反映）` : ''}`, 'success', 6000);
+}
+
+async function execCustomerImportMulti(mode) {
+  const data = window._custImport;
+  if (!data || !Array.isArray(data.customers) || data.customers.length === 0) return;
+  await takeSnapshot('pre-restore', { silent: true, note: '物件まとめて取込の直前' });
+  const adopted = _adoptImportSettings(data);
+  _mergeImportedCycles(data);
+  const names = [];
+  for (const c of data.customers) names.push(_importOneCustomer(c, mode));
+  saveState();
+  window._custImport = null;
+  closeModal();
+  showPage('customers');
+  toast(`✓ ${names.length}物件を取り込みました（${names.slice(0, 3).join('、')}${names.length > 3 ? ' ほか' : ''}）${adopted > 0 ? `・計算設定 ${adopted}項目も反映` : ''}`, 'success', 8000);
 }
 
 function exportCatalog() {
