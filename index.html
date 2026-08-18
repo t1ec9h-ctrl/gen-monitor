@@ -862,7 +862,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.2-request-doc</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.3-doc-shift</span></div>
         </div>
       </div>
     </div>
@@ -1170,7 +1170,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.89.2-request-doc';
+const VERSION = '1.89.3-doc-shift';
 
 // ---------- default state ----------
 // ============================================================
@@ -2577,11 +2577,22 @@ function generateMilestones(unit, startHours, maxHours, maxIterations = 1000, op
   // the ones that matter. Look back a bounded distance from the newest record —
   // far enough to catch a recently skipped slot, not the whole service life.
   const LOOKBACK_SLOTS = 6;
-  const rawLookBack = opts.fromStart
+  let rawLookBack = opts.fromStart
     ? step
     : Math.max(step, performedNominals.length > 0
         ? Math.max(lowestPerformed, highestPerformed - LOOKBACK_SLOTS * step) + step
         : highestPerformed + step);
+  // A skipped or deferred slot MUST be inside the scan, or its vacancy — and
+  // with it every strikethrough, shift and the struck row itself — silently
+  // disappears. Records older than the slot kept it in view by accident; once
+  // they are pruned (or were never entered) the override sat below the window.
+  const ovrSlots = Object.entries(unit.scheduleOverrides || {})
+    .filter(([, o]) => o && (o.skipped || o.deferTo > 0))
+    .map(([k]) => parseInt(k, 10))
+    .filter(h => h > 0);
+  if (ovrSlots.length > 0) {
+    rawLookBack = Math.min(rawLookBack, Math.floor(Math.min(...ovrSlots) / step) * step);
+  }
   // An off-grid record must not drag the walk off the grid. An initial 500h
   // check logged with a regular type makes lowestPerformed 500, the walk then
   // visits 2,500 → 4,500 → … and never lands on a multiple of the step — no
@@ -3875,6 +3886,7 @@ function computeRecommendedSchedule(c, u, plan, w, count = 10) {
       out.push({
         type: p.type, nominalHours: nominal, execHours: p.hours,
         date: p.date, overdue: true,
+        shiftedFrom: p.shiftedFrom || null, deferredFrom: p.deferredFrom || null,
         pulledForward: false, offset: Math.round(p.hours - nominal), backOnGrid: false,
         avoided: false, avoidBlocked: false, byMonthsCap: false,
         gapFromPrev: null,
@@ -3968,6 +3980,7 @@ function computeRecommendedSchedule(c, u, plan, w, count = 10) {
       type: p.type,
       nominalHours: nominal,
       execHours: exec,
+      shiftedFrom: p.shiftedFrom || null, deferredFrom: p.deferredFrom || null,
       date: date || p.date,
       pulledForward: exec < nominalActual,
       offset: Math.round(exec - nominal),
@@ -4316,10 +4329,26 @@ function buildMakerDocForUnit(c, u) {
     : (sched[0] || null);
   const later = sched.slice(bookedNext ? 0 : 1, bookedNext ? 5 : 6);
   const ymLabel = (d) => d ? `${d.getFullYear()}年${d.getMonth() + 1}月` : '—';
-  const nameOf = (nominalHours, type) => {
+  // Same convention as the schedule table: the work's original name struck
+  // through, next to the position it actually fills — a skipped slot moves
+  // everything after it, and the maker should see the moved names too.
+  const strike = (h) => `<span style="text-decoration: line-through; opacity: .55;">${fmtHours(h)}h</span> `;
+  const nameOf = (nominalHours, type, shiftedFrom, deferredFrom) => {
     const letter = type && !['OTHER', 'initial', 'PLUG'].includes(type) ? `${inspTypeLabel(type)}点検` : '';
-    if (nominalHours != null) return letter ? `${fmtHours(nominalHours)}時間点検（${letter}）` : `${fmtHours(nominalHours)}時間点検`;
-    return letter || '点検';
+    const base = nominalHours != null
+      ? (letter ? `${fmtHours(nominalHours)}時間点検（${letter}）` : `${fmtHours(nominalHours)}時間点検`)
+      : (letter || '点検');
+    const pre = shiftedFrom != null && shiftedFrom !== nominalHours ? strike(shiftedFrom) : '';
+    const post = deferredFrom != null ? ` <span style="font-weight:400; font-size:10px;">（${fmtHours(deferredFrom)}h から繰り延べ）</span>` : '';
+    return pre + base + post;
+  };
+  const histShiftsDoc = (plan && plan.histShifts) || {};
+  const lastLabel = (h) => {
+    if (!h) return '';
+    if (h.displayName && h.displayName.trim()) return escapeHtml(h.displayName.trim());
+    const sh = h.nominalHours != null && histShiftsDoc[h.nominalHours] != null ? histShiftsDoc[h.nominalHours] : null;
+    if (sh != null) return nameOf(sh, h.type, h.nominalHours, null);
+    return inspLabel(u, h);
   };
   const ti = next ? safeCall(() => cycleTypeInfo(u, next.type), null) : null;
 
@@ -4343,7 +4372,7 @@ function buildMakerDocForUnit(c, u) {
           <tr>
             <th style="width: 30%;">前回点検</th>
             <td>${lastInsp
-              ? `${fmtDate(lastInsp.date)}　${inspLabel(u, lastInsp)}${lastInsp.atHours != null ? `　実施時 ${fmtHours(lastInsp.atHours)} h` : ''}`
+              ? `${fmtDate(lastInsp.date)}　${lastLabel(lastInsp)}${lastInsp.atHours != null ? `　実施時 ${fmtHours(lastInsp.atHours)} h` : ''}`
               : '記録なし'}</td>
           </tr>
           <tr>
@@ -4363,7 +4392,7 @@ function buildMakerDocForUnit(c, u) {
       <div class="pd-sec-title">次回点検のご依頼</div>
       <table class="pd-table">
         <tbody>
-          <tr><th style="width: 30%;">点検種別</th><td class="pd-strong">${nameOf(next.nominalHours, next.type)}</td></tr>
+          <tr><th style="width: 30%;">点検種別</th><td class="pd-strong">${nameOf(next.nominalHours, next.type, next.shiftedFrom, next.deferredFrom)}</td></tr>
           <tr>
             <th>実施可能期間</th>
             <td class="pd-strong">
@@ -4395,7 +4424,7 @@ function buildMakerDocForUnit(c, u) {
           ${later.map(p => `
             <tr>
               <td>${ymLabel(p.date)}</td>
-              <td>${nameOf(p.nominalHours, p.type)}</td>
+              <td>${nameOf(p.nominalHours, p.type, p.shiftedFrom, p.deferredFrom)}</td>
               <td class="pd-r">約 ${fmtHours(p.execHours)} h</td>
             </tr>`).join('')}
         </tbody>
@@ -9746,6 +9775,10 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '1.89.3', items: [
+    '点検依頼書の「前回点検」「次回点検」「以降の見込み」が、スキップで繰り上げた実施位置を反映するように。スケジュール表と同じく元の呼び名を取り消し線で併記し、繰り延べには「◯◯hから繰り延べ」を注記します',
+    'スキップ・繰り延べ設定のある枠が、それより古い記録が無いと予測の走査範囲から外れ、繰り上げも見送り行も表示されなくなることがあったのを修正（走査開始を設定済みの枠まで拡張）',
   ]},
   { v: '1.89.2', items: [
     '点検依頼書: スケジュール登録済みの点検があるときは、その点検を依頼対象として表示するように（従来は登録済みを飛ばして次の枠＝54,000h側の日程が出ていました）。日付欄は「予定日（登録済み）」と明記し、以降の見込み一覧はその次の点検から続きます',
