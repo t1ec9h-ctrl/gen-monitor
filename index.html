@@ -862,7 +862,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.3-doc-shift</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.4-family-save</span></div>
         </div>
       </div>
     </div>
@@ -1170,7 +1170,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.89.3-doc-shift';
+const VERSION = '1.89.4-family-save';
 
 // ---------- default state ----------
 // ============================================================
@@ -9776,6 +9776,9 @@ const CHANGELOG = [
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
   ]},
+  { v: '1.89.4', items: [
+    '機種カタログの「系統」を保存しても反映されなかったのを修正（保存処理が系統欄を読んでいませんでした）。保存後に画面が最上部へ飛ぶのも直し、元の位置を維持します',
+  ]},
   { v: '1.89.3', items: [
     '点検依頼書の「前回点検」「次回点検」「以降の見込み」が、スキップで繰り上げた実施位置を反映するように。スケジュール表と同じく元の呼び名を取り消し線で併記し、繰り延べには「◯◯hから繰り延べ」を注記します',
     'スキップ・繰り延べ設定のある枠が、それより古い記録が無いと予測の走査範囲から外れ、繰り上げも見送り行も表示されなくなることがあったのを修正（走査開始を設定済みの枠まで拡張）',
@@ -15852,6 +15855,11 @@ function saveCycle() {
     types,
   };
   if (initialType) newCycle.initialType = initialType;
+  // 系統 (family) — the grouping field is edited in this modal but was read
+  // only by an unused legacy save path, so it never reached the catalog.
+  const famEl = document.getElementById('cy_family');
+  const fam = famEl ? famEl.value.trim() : '';
+  if (fam) newCycle.family = fam;
 
   // Mark built-in makers as user-modified so migration won't overwrite the user's changes
   if (ed.isBuiltin) {
@@ -15869,7 +15877,7 @@ function saveCycle() {
   state.inspectionCycles[key] = newCycle;
   saveState();
   closeModal();
-  showPage('settings');
+  showPageKeepingScroll('settings');
   toast(ed.isBuiltin ? '保存しました（ユーザー修正版として保持）' : '保存しました', 'success');
 }
 
