@@ -862,7 +862,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.11-changelog-order</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.12-type-cleanup</span></div>
         </div>
       </div>
     </div>
@@ -1170,7 +1170,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.89.11-changelog-order';
+const VERSION = '1.89.12-type-cleanup';
 
 // ---------- default state ----------
 // ============================================================
@@ -7681,7 +7681,10 @@ function renderUnitDetail(root) {
           ${!usesRunHours(u) ? '' : (() => {
             const missingCount = safeCall(() => findUnrecordedPastInspections(c, u).length, 0);
             return missingCount > 0
-              ? `<button class="btn btn-sm btn-accent btn-attn" onclick="openBulkHistoryModal('${c.id}','${u.id}')" data-tip="記録がない過去の点検 ${missingCount} 件をまとめて登録します。Excelの実データ貼り付けと、稼働ペースからの推定値の両方がこの画面から使えます">
+              ? `${(() => {
+                   const nA = (u.inspectionHistory || []).filter(h => h.type === 'A' && h.note === '一括取り込み').length;
+                   return nA > 0 ? `<button class="btn btn-sm" onclick="clearImportedTypes('${c.id}','${u.id}')" data-tip="貼り付け取り込みが種別なしのデータに付けてしまった「A」を、この号機の取り込み記録 ${nA} 件からまとめて外します（手入力の記録には触れません）">取り込みのA種別をクリア (${nA})</button>` : '';
+                 })()}<button class="btn btn-sm btn-accent btn-attn" onclick="openBulkHistoryModal('${c.id}','${u.id}')" data-tip="記録がない過去の点検 ${missingCount} 件をまとめて登録します。Excelの実データ貼り付けと、稼働ペースからの推定値の両方がこの画面から使えます">
                    過去分をまとめて登録 <span class="chip ml-1" style="font-size: 10px; background: rgba(255,255,255,0.25); color: inherit;">${missingCount}</span>
                  </button>`
               : `<button class="btn btn-sm" onclick="openBulkHistoryModal('${c.id}','${u.id}')" title="未記録の過去点検を確認">過去分を確認</button>`;
@@ -9785,6 +9788,9 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '1.89.12', items: [
+    '種別なし物件の取り込み記録に付いてしまった「A」を号機単位でまとめて外すボタンを追加（対象はメモが「一括取り込み」の記録のみ。件数確認つき、実行前の状態へ復元も可能）',
   ]},
   { v: '1.89.11', items: [
     '改善履歴の並び順を修正（常に新しい順で表示）',
@@ -17352,6 +17358,24 @@ function saveCycleAdjust(customerId, unitId) {
   saveState();
   showPageKeepingScroll('unit-detail');
   toast(u.cycleAdjust ? 'この号機だけの調整を保存しました' : '調整はありません（機種標準どおり）', 'success');
+}
+
+// One-shot repair for the typeless-import bug: the paste import used to stamp
+// 'A' on records that had no type. Scoped to imported records of ONE unit —
+// the fleet is cleanly split into typed and typeless units, so nothing manual
+// is in range.
+function clearImportedTypes(customerId, unitId) {
+  const c = state.customers.find(x => x.id === customerId);
+  const u = c && c.units.find(x => x.id === unitId);
+  if (!u) return;
+  const targets = (u.inspectionHistory || []).filter(h => h.type === 'A' && h.note === '一括取り込み');
+  if (targets.length === 0) { toast('対象の記録はありません', 'success'); return; }
+  if (!confirm(`この号機の取り込み記録 ${targets.length} 件の種別「A」を空（—表示）にします。よろしいですか？`)) return;
+  takeSnapshot('edit', { silent: true, note: '取り込み記録の種別クリア' });
+  for (const h of targets) h.type = '';
+  saveState();
+  showPageKeepingScroll('unit-detail');
+  toast(`✓ ${targets.length} 件の種別をクリアしました（—表示になります）`, 'success');
 }
 
 function clearCycleAdjust(customerId, unitId) {
