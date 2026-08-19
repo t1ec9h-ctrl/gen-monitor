@@ -862,7 +862,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.8-maker-graph</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.9-typeless</span></div>
         </div>
       </div>
     </div>
@@ -1170,7 +1170,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.89.8-maker-graph';
+const VERSION = '1.89.9-typeless';
 
 // ---------- default state ----------
 // ============================================================
@@ -9399,7 +9399,7 @@ function inspTypeLabel(t) {
   if (t === 'initial') return '初回';
   if (t === 'OTHER') return 'その他';
   if (t === 'PLUG') return 'プラグ交換';
-  return t;
+  return t || '—';
 }
 
 // ============================================================
@@ -9785,6 +9785,9 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '1.89.9', items: [
+    '点検種別のない物件で、貼り付け取り込みが種別を勝手に「A」として保存していたのを修正。種別なしのまま取り込み、表示は「—」になります（既存のA表記は記録の編集で種別を空にすれば—になります）',
   ]},
   { v: '1.89.8', items: [
     'ダッシュボードのメーカー構成グラフを系統でまとめて表示。系統を1つでも設定すると、同じ系統の機種（複製やサイト別バリアント）が1つの扇に集計されます（系統未設定の機種は従来どおり機種単位）',
@@ -11707,7 +11710,9 @@ function commitHistoryImport() {
       id: uid('i'),
       date: r.date,
       atHours: r.atHours,
-      type: r.type || 'A',
+      // No type in the pasted data means the site simply doesn't classify its
+      // inspections — storing 'A' invented one. Keep it empty; displays show —.
+      type: r.type || '',
       nominalHours: r.nominalHours,
       plugReplaced: true,
       note: '一括取り込み',
