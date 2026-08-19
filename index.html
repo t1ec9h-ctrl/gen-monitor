@@ -611,11 +611,17 @@ table.data-table tr.row-clickable { cursor: pointer; }
     min-height: 0 !important;
   }
 
-  /* A card is one idea — let it move to the next sheet rather than split */
+  /* Tall cards (the schedule table spans pages) must be allowed to split —
+     forcing them whole onto the next sheet left half-page voids. Integrity
+     lives at the ROW level instead: rows never split, table headers repeat on
+     each page, and a card's header sticks to its first content. */
   .card, .card-elev {
-    break-inside: avoid;
-    page-break-inside: avoid;
+    break-inside: auto;
+    page-break-inside: auto;
   }
+  tr { break-inside: avoid; page-break-inside: avoid; }
+  thead { display: table-header-group; }
+  .card > .hairline-b { break-after: avoid; page-break-after: avoid; }
 
   /* Section headings stay with what they introduce */
   .section-title, .section-title-jp {
@@ -862,7 +868,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.15-initial-covered</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.16-print-flow</span></div>
         </div>
       </div>
     </div>
@@ -1170,7 +1176,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.89.15-initial-covered';
+const VERSION = '1.89.16-print-flow';
 
 // ---------- default state ----------
 // ============================================================
@@ -9802,6 +9808,9 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '1.89.16', items: [
+    '印刷でページの半分ほどが空白になることがあったのを修正。縦長のカード（点検スケジュールなど）を丸ごと次ページへ送らず、行単位で自然に分割します（行の途中では切れず、表の見出しは各ページに繰り返し表示）',
   ]},
   { v: '1.89.15', items: [
     '初回点検を記録済みなのに「過去分をまとめて登録」に初回（500hなど）が出続けていたのを修正。初回種別の記録は初回枠を実施済みとして扱います（記録に通常位置が入っていない場合も対象）。スケジュールの期限超過表示からも消えます',
