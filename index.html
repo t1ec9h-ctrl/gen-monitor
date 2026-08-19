@@ -862,7 +862,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.14-drift-ui</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.15-initial-covered</span></div>
         </div>
       </div>
     </div>
@@ -1170,7 +1170,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.89.14-drift-ui';
+const VERSION = '1.89.15-initial-covered';
 
 // ---------- default state ----------
 // ============================================================
@@ -3468,9 +3468,20 @@ function computeUnitPlanUncached(customer, unit, opts = {}) {
   // Skip milestones that have already been performed (by nominalHours match)
   const performedNominals = new Set(
     (unit.inspectionHistory || [])
-      .filter(h => h.type !== 'initial' && h.type !== 'OTHER' && h.nominalHours != null)
+      // 'initial' counts: the record covers the initial milestone — excluding
+      // it left the 500h slot forever "unrecorded" in the bulk modal and
+      // overdue in the schedule. OTHER stays out (ad-hoc work fills no slot).
+      .filter(h => h.type !== 'OTHER' && h.nominalHours != null)
       .map(h => h.nominalHours)
   );
+  // An 'initial'-typed record covers the initial slot even when 通常位置 was
+  // left blank at entry time.
+  {
+    const cycInit = safeCall(() => getCycleForUnit(unit), null);
+    if (cycInit && cycInit.initial > 0 && (unit.inspectionHistory || []).some(h => h.type === 'initial')) {
+      performedNominals.add(cycInit.initial);
+    }
+  }
 
   // Nominal slots already covered by a registered plan — their predicted twin
   // must be suppressed, otherwise one inspection appears as two rows.
@@ -9792,6 +9803,9 @@ const CHANGELOG = [
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
   ]},
+  { v: '1.89.15', items: [
+    '初回点検を記録済みなのに「過去分をまとめて登録」に初回（500hなど）が出続けていたのを修正。初回種別の記録は初回枠を実施済みとして扱います（記録に通常位置が入っていない場合も対象）。スケジュールの期限超過表示からも消えます',
+  ]},
   { v: '1.89.14', items: [
     '「通常位置とのズレの扱い」カードを表示項目で非表示・並び替えできるように',
     'ズレ実績の注意書きが設定を無視して「以降もこのズレが続く前提」と表示していたのを修正。「今のズレを保ったまま計画する」がオフのときは「推奨どおり実施していくと通常位置へ戻していきます」と表示します',
@@ -11473,6 +11487,12 @@ function findUnrecordedPastInspections(c, u) {
       .filter(h => h.nominalHours != null)
       .map(h => h.nominalHours)
   );
+  {
+    const cycInit = safeCall(() => getCycleForUnit(u), null);
+    if (cycInit && cycInit.initial > 0 && (u.inspectionHistory || []).some(h => h.type === 'initial')) {
+      recorded.add(cycInit.initial);
+    }
+  }
 
   const model = buildMonthlyModel(modelInputFor(u));
   const out = [];
