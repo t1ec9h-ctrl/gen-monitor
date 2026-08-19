@@ -862,7 +862,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.4-family-save</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.5-chiller-save</span></div>
         </div>
       </div>
     </div>
@@ -1170,7 +1170,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.89.4-family-save';
+const VERSION = '1.89.5-chiller-save';
 
 // ---------- default state ----------
 // ============================================================
@@ -9776,6 +9776,9 @@ const CHANGELOG = [
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
   ]},
+  { v: '1.89.5', items: [
+    'ジェネリンク・補機など時期基準ユニットの点検実施履歴が保存されないことがあったのを修正（内部エラーで保存が黙って中断していました）。記録すると経過時間ベース点検の「前回」「次回」もその場で前進します',
+  ]},
   { v: '1.89.4', items: [
     '機種カタログの「系統」を保存しても反映されなかったのを修正（保存処理が系統欄を読んでいませんでした）。保存後に画面が最上部へ飛ぶのも直し、元の位置を維持します',
   ]},
@@ -11919,6 +11922,11 @@ function saveInspection(customerId, unitId, inspId) {
   const nominalRaw = document.getElementById('im_nominalHours')?.value || '';
   const nominalHours = nominalRaw === '' ? null : parseFloat(nominalRaw);
   if (!date) { toast('実施日を入力','error'); return; }
+  // These are read by BOTH branches. They used to be declared far below, inside
+  // engine-only territory — the non-engine branch hit them in the temporal dead
+  // zone, threw, and the save silently did nothing.
+  const displayName = (document.getElementById('im_displayName')?.value || '').trim();
+  const extraWork = (document.getElementById('im_extraWork')?.value || '').trim();
 
   // Non-engines: the "type" is a calendar item reference. Log it under the item's
   // name and push the item's last-executed date forward so its next due recomputes.
@@ -11990,8 +11998,6 @@ function saveInspection(customerId, unitId, inspId) {
       toast('通常位置h（何時間点検か）を入力してください','error'); return;
     }
   }
-  const displayName = (document.getElementById('im_displayName')?.value || '').trim();
-  const extraWork = (document.getElementById('im_extraWork')?.value || '').trim();
   const noNominal = (type === 'initial' || type === 'OTHER' || type === 'PLUG');
 
   // No need to copy the reading into hoursLog — getCurrentHoursState reads
