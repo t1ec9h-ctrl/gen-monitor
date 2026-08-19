@@ -862,7 +862,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.9-typeless</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.10-import-note</span></div>
         </div>
       </div>
     </div>
@@ -1170,7 +1170,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.89.9-typeless';
+const VERSION = '1.89.10-import-note';
 
 // ---------- default state ----------
 // ============================================================
@@ -9786,6 +9786,9 @@ const CHANGELOG = [
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
   ]},
+  { v: '1.89.10', items: [
+    '履歴の貼り付け取り込みでメモも取り込めるように。種別の後ろの列（複数あればまとめて）がそのままメモとして保存されます',
+  ]},
   { v: '1.89.9', items: [
     '点検種別のない物件で、貼り付け取り込みが種別を勝手に「A」として保存していたのを修正。種別なしのまま取り込み、表示は「—」になります（既存のA表記は記録の編集で種別を空にすれば—になります）',
   ]},
@@ -11530,12 +11533,15 @@ function parseHistoryLines(text) {
 
     let date = null, type = null;
     const nums = [];
+    const noteParts = [];
     for (const cell of cells) {
       const d = parseLooseDate(cell);
       if (d && !date) { date = d; continue; }
       const n = cell.replace(/[,\s]/g, '').replace(/時間|h|H|hr$/i, '');
       if (/^\d+(\.\d+)?$/.test(n)) { nums.push(parseFloat(n)); continue; }
-      if (!type) type = cell.replace(/点検|検査/g, '').trim();
+      // First text cell is the type; anything after it is the memo.
+      if (!type) { type = cell.replace(/点検|検査/g, '').trim(); continue; }
+      if (cell.trim()) noteParts.push(cell.trim());
     }
     if (!date) { errors.push({ line: idx + 1, text: line, why: '日付を読み取れません' }); return; }
     if (nums.length === 0) { errors.push({ line: idx + 1, text: line, why: '運転時間がありません' }); return; }
@@ -11551,7 +11557,7 @@ function parseHistoryLines(text) {
       else if (roundness(b) > roundness(a)) { nominalHours = b; atHours = a; }
       else { nominalHours = Math.max(a, b); atHours = Math.min(a, b); }
     }
-    rows.push({ date, type: type || '', nominalHours, atHours, line: idx + 1 });
+    rows.push({ date, type: type || '', nominalHours, atHours, note: noteParts.join(' '), line: idx + 1 });
   });
   rows.sort((a, b) => (a.atHours || 0) - (b.atHours || 0));
   return { rows, errors };
@@ -11715,7 +11721,7 @@ function commitHistoryImport() {
       type: r.type || '',
       nominalHours: r.nominalHours,
       plugReplaced: true,
-      note: '一括取り込み',
+      note: r.note ? r.note : '一括取り込み',
     });
     added++;
   });
