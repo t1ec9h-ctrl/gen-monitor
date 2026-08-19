@@ -862,7 +862,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.7-explicit-save</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.8-maker-graph</span></div>
         </div>
       </div>
     </div>
@@ -1170,7 +1170,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.89.7-explicit-save';
+const VERSION = '1.89.8-maker-graph';
 
 // ---------- default state ----------
 // ============================================================
@@ -5514,11 +5514,21 @@ function renderMakerChart() {
   // Engines only: auxiliaries and chillers mostly have no maker set, and mixing
   // them in just produces a big "未設定" slice that says nothing.
   const counts = {};
+  // Group by 系統 (family) once any catalog entry has one — a fleet with five
+  // per-site variants of one maker reads as one slice, not five. Unfiled
+  // makers stay as their own slices.
+  const famOf = (mk) => {
+    const cy = state.inspectionCycles && state.inspectionCycles[mk];
+    return cy && cy.family && String(cy.family).trim() ? String(cy.family).trim() : null;
+  };
+  const anyFam = Object.values(state.inspectionCycles || {}).some(cy => cy && cy.family && String(cy.family).trim());
   for (const c of state.customers) for (const u of c.units) {
     if (!isEngine(u)) continue;
-    counts[u.maker] = (counts[u.maker] || 0) + 1;
+    const g = anyFam ? (famOf(u.maker) || ('__mk__' + u.maker)) : ('__mk__' + u.maker);
+    counts[g] = (counts[g] || 0) + 1;
   }
   const keys = Object.keys(counts);
+  const labelOf = (k) => k.startsWith('__mk__') ? makerName(k.slice(6)) : k;
   const palette = ['#1E3A8A', '#B88A2E', '#6B21A8', '#15803D', '#B45309', '#B91C1C', '#0369A1'];
   // Always tear down the previous instance. Stacking Chart instances on one canvas
   // makes the responsive sizing feed back on itself and the chart shrinks a little
@@ -5527,7 +5537,7 @@ function renderMakerChart() {
   chartRefs.maker = new Chart(ctx, {
     type: 'doughnut',
     data: {
-      labels: keys.map(k => makerName(k)),
+      labels: keys.map(labelOf),
       datasets: [{
         data: keys.map(k => counts[k]),
         backgroundColor: keys.map((_, i) => palette[i % palette.length]),
@@ -9775,6 +9785,9 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '1.89.8', items: [
+    'ダッシュボードのメーカー構成グラフを系統でまとめて表示。系統を1つでも設定すると、同じ系統の機種（複製やサイト別バリアント）が1つの扇に集計されます（系統未設定の機種は従来どおり機種単位）',
   ]},
   { v: '1.89.7', items: [
     '「一覧で登録」した機種（explicit形式）が編集を保存できなかったのを修正。系統などを変えて保存しても「点検種別を追加してください」で弾かれ、通っても一覧データが消える構造でした。一覧・種別・付随情報を引き継いで保存します',
