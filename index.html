@@ -862,7 +862,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.5-chiller-save</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.6-cycle-locate</span></div>
         </div>
       </div>
     </div>
@@ -1170,7 +1170,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.89.5-chiller-save';
+const VERSION = '1.89.6-cycle-locate';
 
 // ---------- default state ----------
 // ============================================================
@@ -9776,6 +9776,9 @@ const CHANGELOG = [
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
   ]},
+  { v: '1.89.6', items: [
+    '機種カタログを保存すると、その機種のカードまで自動スクロールしてハイライト表示。系統ありの機種が混ざると系統未設定の機種は一覧の最下部グループへ移動するため、保存が反映されていないように見えていました（保存自体は正常です）',
+  ]},
   { v: '1.89.5', items: [
     'ジェネリンク・補機など時期基準ユニットの点検実施履歴が保存されないことがあったのを修正（内部エラーで保存が黙って中断していました）。記録すると経過時間ベース点検の「前回」「次回」もその場で前進します',
   ]},
@@ -10461,7 +10464,7 @@ function renderSettingsPage(root) {
             return `<div class="section-title mt-4 mb-1" style="font-size:11px; letter-spacing:.08em;">${escapeHtml(f)}</div>`;
           };
           return _ents.map(([key, cycle]) => _hdr(cycle) + `
-          <div class="hairline p-4 rounded">
+          <div class="hairline p-4 rounded" id="cyclecard_${key}">
             <div class="flex items-start justify-between gap-3 mb-2">
               <div class="flex-1">
                 <div class="flex items-center gap-2 mb-1">
@@ -15884,6 +15887,17 @@ function saveCycle() {
   saveState();
   closeModal();
   showPageKeepingScroll('settings');
+  // Grouping can move the entry (a family-less cycle files under 系統未設定 at
+  // the bottom), which read as "the save didn't take". Walk the reader to it.
+  setTimeout(() => {
+    const el = document.getElementById('cyclecard_' + key);
+    if (el) {
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      el.style.transition = 'box-shadow .3s';
+      el.style.boxShadow = '0 0 0 3px var(--gold)';
+      setTimeout(() => { el.style.boxShadow = ''; }, 2200);
+    }
+  }, 80);
   toast(ed.isBuiltin ? '保存しました（ユーザー修正版として保持）' : '保存しました', 'success');
 }
 
