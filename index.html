@@ -862,7 +862,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.10-import-note</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.11-changelog-order</span></div>
         </div>
       </div>
     </div>
@@ -1170,7 +1170,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.89.10-import-note';
+const VERSION = '1.89.11-changelog-order';
 
 // ---------- default state ----------
 // ============================================================
@@ -9786,6 +9786,9 @@ const CHANGELOG = [
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
   ]},
+  { v: '1.89.11', items: [
+    '改善履歴の並び順を修正（常に新しい順で表示）',
+  ]},
   { v: '1.89.10', items: [
     '履歴の貼り付け取り込みでメモも取り込めるように。種別の後ろの列（複数あればまとめて）がそのままメモとして保存されます',
   ]},
@@ -10309,7 +10312,13 @@ function renderChangelog() {
         <div class="text-[11px] text-[color:var(--ink-muted)] mb-3">
           新しいものから順に表示しています。表示が変わった際の確認にお使いください。
         </div>
-        ${CHANGELOG.map(e => `
+        ${CHANGELOG.slice().sort((a, b) => {
+          // Render strictly newest-first regardless of array order — hand
+          // insertion drifted a few entries out of sequence.
+          const p = v => String(v).split('.').map(n => parseInt(n, 10) || 0);
+          const [a1, a2 = 0, a3 = 0] = p(a.v), [b1, b2 = 0, b3 = 0] = p(b.v);
+          return (b1 - a1) || (b2 - a2) || (b3 - a3);
+        }).map(e => `
           <div class="mb-3">
             <div class="font-mono text-[11px] font-semibold" style="color: var(--accent);">v${e.v}</div>
             <ul class="text-[12px] leading-relaxed mt-0.5" style="list-style: disc; padding-left: 1.2em;">
