@@ -862,7 +862,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.6-cycle-locate</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.7-explicit-save</span></div>
         </div>
       </div>
     </div>
@@ -1170,7 +1170,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.89.6-cycle-locate';
+const VERSION = '1.89.7-explicit-save';
 
 // ---------- default state ----------
 // ============================================================
@@ -9776,6 +9776,9 @@ const CHANGELOG = [
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
   ]},
+  { v: '1.89.7', items: [
+    '「一覧で登録」した機種（explicit形式）が編集を保存できなかったのを修正。系統などを変えて保存しても「点検種別を追加してください」で弾かれ、通っても一覧データが消える構造でした。一覧・種別・付随情報を引き継いで保存します',
+  ]},
   { v: '1.89.6', items: [
     '機種カタログを保存すると、その機種のカードまで自動スクロールしてハイライト表示。系統ありの機種が混ざると系統未設定の機種は一覧の最下部グループへ移動するため、保存が反映されていないように見えていました（保存自体は正常です）',
   ]},
@@ -15786,10 +15789,26 @@ function saveCycle() {
       })(),
       types: seen.map(t => ({ type: t, interval: maxGap })),
       userModified: true,
+      // 系統 — this branch built its own object and dropped the field, which
+      // is why list-registered makers could never be filed under a family.
+      ...(() => {
+        const fe = document.getElementById('cy_family');
+        const fv = fe ? fe.value.trim() : '';
+        return fv ? { family: fv } : {};
+      })(),
     };
     saveState();
     closeModal();
-    showPage('settings');
+    showPageKeepingScroll('settings');
+    setTimeout(() => {
+      const el = document.getElementById('cyclecard_' + ed.originalKey);
+      if (el) {
+        el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        el.style.transition = 'box-shadow .3s';
+        el.style.boxShadow = '0 0 0 3px var(--gold)';
+        setTimeout(() => { el.style.boxShadow = ''; }, 2200);
+      }
+    }, 80);
     toast('保存しました', 'success');
     return;
   }
@@ -15843,7 +15862,12 @@ function saveCycle() {
       if (t.workDesc) entry.workDesc = t.workDesc;
       return entry;
     });
-  if (types.length === 0) { toast('少なくとも1つの点検種別を追加してください', 'error'); return; }
+  // Explicit-list cycles (一覧で登録) carry their schedule in `explicit`, not in
+  // grid types — demanding types blocked every edit (even just adding a 系統),
+  // and the rebuilt object would have dropped the list itself.
+  const prevCyc = (ed.originalKey && state.inspectionCycles && state.inspectionCycles[ed.originalKey]) || null;
+  const hasExplicitList = !!(prevCyc && Array.isArray(prevCyc.explicit) && prevCyc.explicit.length > 0);
+  if (types.length === 0 && !hasExplicitList) { toast('少なくとも1つの点検種別を追加してください', 'error'); return; }
 
   // Duplicate key check
   if (!ed.isBuiltin && ed.originalKey !== key && state.inspectionCycles[key]) {
@@ -15858,17 +15882,20 @@ function saveCycle() {
       }
     : null;
 
+  // Start from the previous object so fields the form doesn't edit (explicit
+  // list, byMonths, import metadata) survive the save.
   const newCycle = {
+    ...(prevCyc || {}),
     name, step, initial,
     alternating,
-    types,
+    types: types.length ? types : (prevCyc ? (prevCyc.types || []) : []),
   };
-  if (initialType) newCycle.initialType = initialType;
+  if (initialType) newCycle.initialType = initialType; else delete newCycle.initialType;
   // 系統 (family) — the grouping field is edited in this modal but was read
   // only by an unused legacy save path, so it never reached the catalog.
   const famEl = document.getElementById('cy_family');
   const fam = famEl ? famEl.value.trim() : '';
-  if (fam) newCycle.family = fam;
+  if (fam) newCycle.family = fam; else delete newCycle.family;
 
   // Mark built-in makers as user-modified so migration won't overwrite the user's changes
   if (ed.isBuiltin) {
