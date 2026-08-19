@@ -862,7 +862,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.12-type-cleanup</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.13-memo-vs-type</span></div>
         </div>
       </div>
     </div>
@@ -1170,7 +1170,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.89.12-type-cleanup';
+const VERSION = '1.89.13-memo-vs-type';
 
 // ---------- default state ----------
 // ============================================================
@@ -9789,6 +9789,9 @@ const CHANGELOG = [
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
   ]},
+  { v: '1.89.13', items: [
+    '貼り付け取り込みで、種別のないデータのメモが種別欄に入ってしまうのを修正。種別らしい形（A・B1・C…・初回・その他など）のセルだけを種別と判定し、それ以外の文章はすべてメモに入ります',
+  ]},
   { v: '1.89.12', items: [
     '種別なし物件の取り込み記録に付いてしまった「A」を号機単位でまとめて外すボタンを追加（対象はメモが「一括取り込み」の記録のみ。件数確認つき、実行前の状態へ復元も可能）',
   ]},
@@ -11554,8 +11557,13 @@ function parseHistoryLines(text) {
       if (d && !date) { date = d; continue; }
       const n = cell.replace(/[,\s]/g, '').replace(/時間|h|H|hr$/i, '');
       if (/^\d+(\.\d+)?$/.test(n)) { nums.push(parseFloat(n)); continue; }
-      // First text cell is the type; anything after it is the memo.
-      if (!type) { type = cell.replace(/点検|検査/g, '').trim(); continue; }
+      // A cell is the TYPE only if it looks like one (A, B1, C … / 初回 /
+      // その他 / プラグ). Free text used to be swallowed as the type on
+      // typeless sites — it belongs in the memo.
+      if (!type) {
+        const t = cell.replace(/点検|検査/g, '').trim();
+        if (/^(初回|その他|OTHER|PLUG|[A-Za-z]{1,3}[0-9]{0,2})$/.test(t)) { type = t; continue; }
+      }
       if (cell.trim()) noteParts.push(cell.trim());
     }
     if (!date) { errors.push({ line: idx + 1, text: line, why: '日付を読み取れません' }); return; }
