@@ -868,7 +868,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.23-ce-latest</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.24-service-age</span></div>
         </div>
       </div>
     </div>
@@ -1176,7 +1176,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.89.23-ce-latest';
+const VERSION = '1.89.24-service-age';
 
 // ---------- default state ----------
 // ============================================================
@@ -6822,6 +6822,19 @@ function renderUnitDetail(root) {
       <div class="stat-card">
         <div class="stat-label">現在の運転時間</div>
         <div class="stat-value font-mono">${projected ? fmtHours(projected.hours) : '—'}<span class="text-sm ml-1 text-[color:var(--ink-muted)]">h</span></div>
+        ${(() => {
+          // Age since commissioning — how long this machine has been in service
+          // is the first thing a visitor wants next to the meter reading.
+          if (!u.commissionDate) return '';
+          const cd = new Date(u.commissionDate);
+          if (isNaN(cd)) return '';
+          const now2 = new Date();
+          let months = (now2.getFullYear() - cd.getFullYear()) * 12 + (now2.getMonth() - cd.getMonth());
+          if (now2.getDate() < cd.getDate()) months -= 1;
+          if (months < 0) months = 0;
+          const yy = Math.floor(months / 12), mm = months % 12;
+          return `<div class="stat-hint" style="margin-bottom:2px;">稼働開始から ${yy > 0 ? yy + '年' : ''}${mm}ヶ月（${cd.getFullYear()}/${String(cd.getMonth() + 1).padStart(2, '0')}〜）</div>`;
+        })()}
         <div class="stat-hint">${(() => {
           if (!projected) return 'データ未入力';
           if (projected.projected) return `本日予測 · 最新入力 ${fmtHours(projected.sourceHours)}h (${fmtDate(projected.sourceTs)})`;
@@ -9960,6 +9973,9 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '1.89.24', items: [
+    '「現在の運転時間」カードに、稼働開始からの経過（◯年◯ヶ月・開始年月）を表示。機器情報の稼働開始日が入っている号機で表示されます',
   ]},
   { v: '1.89.23', items: [
     'スキップ→繰り延べ先の点検をもって保守契約終了とする場合に、終了の帯がその点検より上に出ていたのを修正。終了枠に一致する点検が複数あるとき（繰り上げた元◯◯h点検と、繰り延べで◯◯h位置に来た点検）は、日付が最後のものの直後に帯を置きます。統計カードの終了日も同じ基準です',
