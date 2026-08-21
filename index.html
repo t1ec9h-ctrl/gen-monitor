@@ -623,6 +623,18 @@ table.data-table tr.row-clickable { cursor: pointer; }
   thead { display: table-header-group; }
   .card > .hairline-b { break-after: avoid; page-break-after: avoid; }
 
+  /* Long memos blew history rows up to several lines each and the page count
+     with them — on paper two lines carry the gist, the app keeps the rest. */
+  [data-sec="history"] table td:nth-child(7) {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    font-size: 10px;
+    line-height: 1.4;
+    max-width: 220px;
+  }
+
   /* Section headings stay with what they introduce */
   .section-title, .section-title-jp {
     break-after: avoid;
@@ -868,7 +880,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.28-chart-revert</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.29-print-memo</span></div>
         </div>
       </div>
     </div>
@@ -1176,7 +1188,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.89.28-chart-revert';
+const VERSION = '1.89.29-print-memo';
 
 // ---------- default state ----------
 // ============================================================
@@ -9975,6 +9987,9 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '1.89.29', items: [
+    '印刷時、点検実施履歴のメモを2行までに省略（画面上は従来どおり全文表示）。長いメモで行が縦に伸びて枚数が増えるのを抑えます',
   ]},
   { v: '1.89.28', items: [
     '累積運転時間グラフの印刷サイズを元（60mm）に戻しました（縦120mmは見栄えが悪かったため）',
