@@ -18,6 +18,13 @@
    the card scrolls sideways instead when space runs out. */
 #inspectionHistoryTable { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 #inspectionHistoryTable table { min-width: 900px; }
+/* Memo is ONE line, always — overflow shows an ellipsis instead of wrapping.
+   Whatever width the layout leaves it, the row height stays put. */
+#inspectionHistoryTable table td:nth-child(7) {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 /* ---- hover tooltips (data-tip) ---------------------------------------- */
 [data-tip] { position: relative; cursor: help; }
@@ -887,7 +894,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.30-memo-width</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.31-memo-oneline</span></div>
         </div>
       </div>
     </div>
@@ -1195,7 +1202,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.89.30-memo-width';
+const VERSION = '1.89.31-memo-oneline';
 
 // ---------- default state ----------
 // ============================================================
@@ -9994,6 +10001,9 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '1.89.31', items: [
+    '点検実施履歴のメモを常に1行表示に（収まらない分は…で省略）。行の高さが列幅に関係なく一定になります',
   ]},
   { v: '1.89.30', items: [
     '画面幅が狭い（またはズームが大きい）とき、点検実施履歴のメモ列が1文字幅に潰れて縦書きになっていたのを修正。表に最小幅を持たせ、収まらないときはカード内で横スクロールします（「一括取り込み」は常に1行で表示）',
