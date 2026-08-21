@@ -602,6 +602,13 @@ table.data-table tr.row-clickable { cursor: pointer; }
     break-inside: avoid;
     page-break-inside: avoid;
   }
+  /* The cumulative-hours chart owns its page — 60mm left three quarters of the
+     sheet blank. Stretch it tall (the reader OK'd the aspect change). */
+  #cumChart {
+    height: 120mm !important;
+    max-height: 120mm !important;
+    width: 100% !important;
+  }
   /* The mini overview strips under the interactive charts are navigation aids */
   #hpOverviewCanvas, #unitStopOverviewCanvas { display: none !important; }
   /* The fixed-height wrappers the charts live in are sized for the screen; on
@@ -868,7 +875,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.25-row-numbers</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.26-print-chart</span></div>
         </div>
       </div>
     </div>
@@ -1176,7 +1183,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.89.25-row-numbers';
+const VERSION = '1.89.26-print-chart';
 
 // ---------- default state ----------
 // ============================================================
@@ -9973,6 +9980,9 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '1.89.26', items: [
+    '累積運転時間グラフの印刷サイズを拡大（縦120mm）。A4の大半が空白になっていたのを解消します',
   ]},
   { v: '1.89.25', items: [
     '点検スケジュールの#番号が、保守契約終了・委託期間終了予定日などの帯行で飛んでいたのを修正。実際の点検行だけを連番で数えます',
