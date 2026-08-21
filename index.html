@@ -875,7 +875,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.26-print-chart</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.27-overrides-sec</span></div>
         </div>
       </div>
     </div>
@@ -1183,7 +1183,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.89.26-print-chart';
+const VERSION = '1.89.27-overrides-sec';
 
 // ---------- default state ----------
 // ============================================================
@@ -6406,6 +6406,7 @@ const UNIT_SECTIONS = [
   { key: 'setup',     label: '入力の状況',            hint: '未入力の項目と、埋めると何が分かるか' },
   { key: 'window',    label: '次回点検はいつまでに',    hint: '実施できる期間と上限' },
   { key: 'drift',     label: '通常位置とのズレの扱い',  hint: 'ズレを保つか通常位置へ戻すかの設定' },
+  { key: 'overrides', label: '手動で設定した点検枠',    hint: 'スキップ・繰り延べ・契約終了などの設定一覧' },
   { key: 'schedule',  label: '点検スケジュール',        hint: '実施済み・予定・予測の一覧とシミュレーション' },
   { key: 'calendar',  label: '経過時間ベースの点検',    hint: '保安検査・シーズンイン/オフなど' },
   { key: 'cumhours',  label: '累積運転時間のグラフ',    hint: '運転時間の推移と点検の位置' },
@@ -7283,13 +7284,14 @@ function renderUnitDetail(root) {
         return o && (o.contractEnd || o.skipped || o.deferTo > 0 || o.type || o.displayName);
       }).sort((a, b) => a - b);
       if (keys.length === 0) return '';
+      if (!isSecVisible('overrides')) return '';
       // If an end-of-contract flag is what's cutting the schedule short, say so
       // at the top of the card — otherwise it reads as a list of minor notes.
       const endKey = keys.find(k => ovr[k] && ovr[k].contractEnd);
       const plan0 = safeCall(() => computeUnitPlan(c, u), null);
       const stopped = endKey != null && plan0 && (plan0.predicted || []).length <= 1;
       return `
-      <div class="card mb-6" style="border-color:#F5C77E;">
+      <div class="card mb-6" data-sec="overrides" style="border-color:#F5C77E;">
         <div class="px-5 py-4 hairline-b" style="background:#FEF9C3;">
           <div class="section-title" style="color:#78350F;">MANUAL OVERRIDES</div>
           <div class="section-title-jp" style="color:#78350F;">手動で設定した点検枠</div>
@@ -9980,6 +9982,9 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '1.89.27', items: [
+    '「手動で設定した点検枠」（MANUAL OVERRIDES）カードを表示項目で非表示・並び替えできるように',
   ]},
   { v: '1.89.26', items: [
     '累積運転時間グラフの印刷サイズを拡大（縦120mm）。A4の大半が空白になっていたのを解消します',
