@@ -899,7 +899,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.31-memo-oneline</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.32-plan-shift</span></div>
         </div>
       </div>
     </div>
@@ -1211,7 +1211,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.89.31-memo-oneline';
+const VERSION = '1.89.32-plan-shift';
 
 // ---------- default state ----------
 // ============================================================
@@ -3851,6 +3851,16 @@ function computeUnitPlanUncached(customer, unit, opts = {}) {
       displayName: oTo.displayName || d.displayName || '',
       slotNote: oTo.note || d.note || '',
       deferredFrom: d.from });
+  }
+  // A booking suppresses its slot, but the walk compared against the PRE-shift
+  // name (m.hours). After a skip pulled the next work onto a lower position,
+  // a plan registered at that POSITION (e.g. 92,000) matched nothing — the
+  // predicted row and the plan row both showed, and every later row's figures
+  // slid one line off. Suppress by the FINAL position too.
+  for (let i = predicted.length - 1; i >= 0; i--) {
+    if (predicted[i].nominalHours != null && plannedNominals.has(predicted[i].nominalHours)) {
+      predicted.splice(i, 1);
+    }
   }
   predicted.sort((a, b) => a.hours - b.hours);
 
@@ -10010,6 +10020,9 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '1.89.32', items: [
+    'スキップで繰り上げた枠に点検予定を登録すると、その枠の予測行が消えずに予定と二重に表示され、以降の行の実施時間・ズレが1行ずつずれて表示されることがあったのを修正。予定との突き合わせを繰り上げ後の実施位置でも行います',
   ]},
   { v: '1.89.31', items: [
     '点検実施履歴のメモを常に1行表示に（収まらない分は…で省略）。行の高さが列幅に関係なく一定になります',
