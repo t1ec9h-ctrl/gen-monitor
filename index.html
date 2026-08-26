@@ -1214,7 +1214,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.89.39-range-gap';
+const VERSION = '1.89.40-plan-record';
 // 左上のバージョン表記をVERSION定数から自動反映（手動2箇所更新の同期漏れ対策 v1.89.39）
 try { const _vb = document.getElementById('appVersionBadge'); if (_vb) _vb.textContent = 'v' + VERSION; } catch (e) {}
 
@@ -2247,6 +2247,27 @@ function toast(msg, kind='default', ms=2800) {
   setTimeout(()=>{ t.style.opacity='0'; t.style.transform='translateY(-10px)'; t.style.transition='all 0.2s'; }, ms-200);
   setTimeout(()=>t.remove(), ms);
 }
+
+// 保存失敗toast共通ガード (v1.89.40): onclickハンドラ内の例外はコンソールにしか
+// 出ず、「ボタンを押しても何も起きない」ように見える。実際にTDZ等で保存が
+// 黙って失敗する事故が複数あった（v1.89.5, v1.89.7）。未捕捉エラーを検知
+// したらエラートーストで知らせる。3秒スロットルで描画ループ時の連打を防ぐ。
+let _lastErrToastAt = 0;
+function _errToast(msg) {
+  const now = Date.now();
+  if (now - _lastErrToastAt < 3000) return;
+  _lastErrToastAt = now;
+  try { toast('操作を完了できませんでした（内部エラー）: ' + String(msg || '').slice(0, 120), 'error', 5000); } catch (_) {}
+}
+window.addEventListener('error', (e) => {
+  // 画像等のリソース読込エラーは対象外（それらは message を持たない）
+  if (!e || (!e.error && !e.message)) return;
+  _errToast(e.message || (e.error && e.error.message));
+});
+window.addEventListener('unhandledrejection', (e) => {
+  const r = e && e.reason;
+  _errToast(r && r.message ? r.message : r);
+});
 
 // ============================================================
 //  INSPECTION LOGIC — data-driven from state.inspectionCycles
@@ -8635,7 +8656,7 @@ function renderScheduleTable(c, u, plan) {
           // or folded into another visit — so the button follows the row type, not
           // whether the date has passed.
           const actionBtn = r.source==='planned'
-            ? `<button class="btn btn-ghost btn-xs" onclick="deletePlan('${c.id}','${u.id}','${r.planId}')">削除</button>`
+            ? `<button class="btn btn-ghost btn-xs" style="color: var(--gold);" onclick="openInspectionModal('${c.id}','${u.id}',null,'${r.planId}')" title="この予定の内容で実施記録を作成し、予定を自動削除します">実施を記録</button><button class="btn btn-ghost btn-xs" onclick="deletePlan('${c.id}','${u.id}','${r.planId}')">削除</button>`
             : (r.source==='history'
                 ? `<button class="btn btn-ghost btn-xs" onclick="openInspectionModal('${c.id}','${u.id}','${r.historyId}')">編集</button>`
                 : ((r.source==='predicted' || r.source==='skipped') && r.nominalHours != null
@@ -10136,6 +10157,11 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '1.89.40', items: [
+    'スケジュール表の予定登録行に「実施を記録」ボタンを追加。予定の日付・累積h・種別・通常位置hが入った状態で実施記録の画面が開き、保存するとその予定は実施済みとして自動削除されます',
+    'ユニット専用サイクルにも「一覧を貼り付けて設定」を追加。機種カタログの一覧登録と同じ解析で、メーカー資料の一覧から周期設定を自動反映します（規則化できない一覧は書かれたとおりに設定）',
+    'ボタンを押しても内部エラーで何も起きないとき、エラー内容をトーストで表示するようにしました（保存が黙って失敗する事故の再発防止）',
   ]},
   { v: '1.89.39', items: [
     '「契約終了まで」をOFFにしたとき、予測範囲より先にある保守契約終了・委託期間終了の帯が最後の点検の直後に並び、もうすぐ終了するように見えていたのを改善。帯の手前に「〜 予測範囲より先の点検は省略しています 〜」の行を挟みます',
@@ -11677,10 +11703,13 @@ function clearSlotOverride(customerId, unitId, nominalHours) {
   toast('個別設定を解除しました', 'success');
 }
 
-function openInspectionModal(customerId, unitId, inspId) {
+function openInspectionModal(customerId, unitId, inspId, fromPlanId) {
   const c = state.customers.find(x=>x.id===customerId);
   const u = c.units.find(x=>x.id===unitId);
   const editing = inspId ? (u.inspectionHistory||[]).find(i=>i.id===inspId) : null;
+  // 予定→実施のワンクリック記録 (v1.89.40): 登録済み予定の値をプリフィルし、
+  // 保存時にその予定を自動削除する。
+  const fromPlan = (!editing && fromPlanId) ? (u.inspectionPlanned||[]).find(p=>p.id===fromPlanId) : null;
   // getCycle returns null when no catalog is imported or the maker is unset —
   // reading .types off it used to throw, which made the button look dead.
   const cycle = getCycle(u.maker) || { types: [] };
@@ -11738,19 +11767,20 @@ function openInspectionModal(customerId, unitId, inspId) {
         <div class="grid grid-cols-2 gap-4">
           <div>
             <label class="field-label">実施日 <span style="color: var(--red);">*</span></label>
-            <input id="im_date" class="input input-mono" type="date" value="${editing?.date || toISODate(new Date())}">
+            <input id="im_date" class="input input-mono" type="date" value="${editing?.date || fromPlan?.date || toISODate(new Date())}">
           </div>
           <div${runHours ? '' : ' style="display:none;"'}>
             <label class="field-label">実施時の累積h <span style="color: var(--red);">*</span></label>
-            <input id="im_hours" class="input input-mono" type="number" step="0.1" value="${editing?.atHours || ''}" placeholder="9500" oninput="suggestNominalHours(this.value, '${u.maker}')">
+            <input id="im_hours" class="input input-mono" type="number" step="0.1" value="${editing?.atHours ?? fromPlan?.atHours ?? ''}" placeholder="9500" oninput="suggestNominalHours(this.value, '${u.maker}')">
           </div>
         </div>
         <div>
           <label class="field-label">点検種別 <span style="color: var(--red);">*</span></label>
           <select id="im_type" class="select" onchange="updateNominalVisibility()">
             ${types.map(t=>{
-              const sel = editing && (editing.type === t
-                || (editing.calendarInspectionId && t === 'CAL:' + editing.calendarInspectionId));
+              const sel = (editing && (editing.type === t
+                || (editing.calendarInspectionId && t === 'CAL:' + editing.calendarInspectionId)))
+                || (fromPlan && fromPlan.type === t);
               return `<option value="${t}" ${sel?'selected':''}>${labelFor(t)}</option>`;
             }).join('')}
           </select>
@@ -11794,7 +11824,7 @@ function openInspectionModal(customerId, unitId, inspId) {
         ` : ''}
         <div id="im_nominalWrap"${runHours ? '' : ' style="display:none;"'}>
           <label class="field-label">何時間点検として実施？（通常位置h）<span style="color: var(--red);">*</span></label>
-          <input id="im_nominalHours" class="input input-mono" type="number" step="${step}" value="${editing?.nominalHours != null ? editing.nominalHours : (editing?.atHours ? Math.round(editing.atHours / step) * step : '')}" placeholder="例: 10000 (10000時間点検として実施)">
+          <input id="im_nominalHours" class="input input-mono" type="number" step="${step}" value="${editing?.nominalHours != null ? editing.nominalHours : (fromPlan?.nominalHours != null ? fromPlan.nominalHours : (editing?.atHours ? Math.round(editing.atHours / step) * step : (fromPlan?.atHours ? Math.round(fromPlan.atHours / step) * step : '')))}" placeholder="例: 10000 (10000時間点検として実施)">
           <div class="text-[11px] text-[color:var(--ink-muted)] mt-1">
             例：10000時間点検を500時間前倒しで9500hで実施した場合 → <span class="font-mono">10000</span> を入力。<br>
             この値を元にサイクルオフセット（${step}h刻みからのズレ）が計算されます。
@@ -11807,7 +11837,7 @@ function openInspectionModal(customerId, unitId, inspId) {
       </div>
       <div class="px-6 py-4 hairline-t flex gap-2 justify-end">
         <button class="btn" onclick="closeModal()">キャンセル</button>
-        <button class="btn btn-accent" onclick="saveInspection('${customerId}','${unitId}', ${inspId?`'${inspId}'`:'null'})">${editing?'更新':'追加'}</button>
+        <button class="btn btn-accent" onclick="saveInspection('${customerId}','${unitId}', ${inspId?`'${inspId}'`:'null'}, ${fromPlan?`'${fromPlan.id}'`:'null'})">${editing?'更新':'追加'}</button>
       </div>
     </div>
   `);
@@ -12403,7 +12433,7 @@ function syncHoursLogWithReading(unit, dateStr, hours, note) {
   return true;
 }
 
-function saveInspection(customerId, unitId, inspId) {
+function saveInspection(customerId, unitId, inspId, fromPlanId) {
   const c = state.customers.find(x=>x.id===customerId);
   const u = c.units.find(x=>x.id===unitId);
   const runHours = usesRunHours(u);
@@ -12452,10 +12482,11 @@ function saveInspection(customerId, unitId, inspId) {
         extra = due ? `　次回期日 ${fmtDate(due)}` : '';
       }
     }
+    if (fromPlanId) u.inspectionPlanned = (u.inspectionPlanned||[]).filter(x=>x.id!==fromPlanId);
     saveState();
     closeModal();
     showPage('unit-detail');
-    toast('保存しました' + extra, 'success');
+    toast('保存しました' + extra + (fromPlanId ? '　予定は実施済みとして削除しました' : ''), 'success');
     return;
   }
 
@@ -12511,10 +12542,11 @@ function saveInspection(customerId, unitId, inspId) {
       plugReplaced, displayName, extraWork,
     });
   }
+  if (fromPlanId) u.inspectionPlanned = (u.inspectionPlanned||[]).filter(x=>x.id!==fromPlanId);
   saveState();
   closeModal();
   showPage('unit-detail');
-  toast('保存しました','success');
+  toast(fromPlanId ? '保存しました　予定は実施済みとして削除しました' : '保存しました','success');
 }
 
 // Suggest nominal hours (nearest step multiple) based on atHours typing
@@ -17871,6 +17903,46 @@ function validateCycle(cycle) {
 }
 
 // Open the unit-specific cycle editor modal
+// 専用サイクルの一覧貼り付け解析 (v1.89.40): parseCycleLines/deriveCycleFromRows/
+// simulateCycle をカタログ側と共用。規則が完全一致すれば構造化フィールドへ、
+// 不規則なら explicit として編集中サイクルに反映する（確定は保存ボタン）。
+function analyzeUnitCyclePaste() {
+  const el = document.getElementById('uc_paste');
+  const text = el ? el.value : '';
+  if (_unitCycleEdit) _unitCycleEdit.pasteText = text;
+  const rows = parseCycleLines(text);
+  if (rows.length < 2) { toast('「運転時間 点検名」の行を2行以上入力してください', 'error'); return; }
+  const cy = _unitCycleEdit && _unitCycleEdit.cycle;
+  if (!cy) return;
+  const derived = deriveCycleFromRows(rows);
+  const maxH = rows[rows.length - 1].hours;
+  const sim = derived ? (safeCall(() => simulateCycle(derived, maxH), []) || []) : [];
+  const allMatch = !!derived && rows.every(r => sim.some(d => d.hours === r.hours && d.type === r.type));
+  if (allMatch) {
+    cy.step = derived.step;
+    cy.initial = derived.initial || null;
+    cy.initialType = derived.initialType || null;
+    cy.types = derived.types.map(t => ({ type: t.type, interval: t.interval }));
+    cy.alternating = derived.alternating || null;
+    delete cy.explicit; delete cy.explicitPeriod; delete cy.explicitRepeat; delete cy.explicitMaxMonths;
+    toast('一覧から規則を読み取り、周期設定に反映しました。内容を確認して保存してください', 'success');
+  } else {
+    const gaps = [];
+    for (let i = 1; i < rows.length; i++) gaps.push(rows[i].hours - rows[i - 1].hours);
+    const maxGap = gaps.length ? Math.max(...gaps) : rows[0].hours;
+    const seen = [];
+    for (const r of rows) if (!seen.includes(r.type)) seen.push(r.type);
+    cy.explicit = rows.map(r => ({ hours: r.hours, type: r.type }));
+    cy.explicitPeriod = maxH;
+    cy.explicitRepeat = true;
+    cy.step = maxGap;
+    cy.types = seen.map(t => ({ type: t, interval: maxGap }));
+    cy.alternating = null;
+    toast('規則化できない一覧のため、書かれたとおり（explicit）に設定しました。内容を確認して保存してください', 'success');
+  }
+  renderUnitCycleModal();
+}
+
 function openUnitCycleModal(customerId, unitId) {
   const c = state.customers.find(x => x.id === customerId);
   const u = c.units.find(x => x.id === unitId);
@@ -17954,6 +18026,23 @@ function renderUnitCycleModal__body() {
           <div>
             <label class="field-label">初回点検タイプ表記</label>
             <input class="input input-mono" value="${cycle.initialType || ''}" placeholder="A / initial" onchange="_unitCycleEdit.cycle.initialType = this.value.trim() || null">
+          </div>
+        </div>
+
+        <!-- Paste & analyze (v1.89.40): 機種カタログの「一覧で登録」と同じ解析を専用サイクルにも -->
+        <div class="hairline rounded p-3" style="background: var(--surface-2);">
+          <div class="flex items-center justify-between mb-2">
+            <label class="text-xs font-semibold">一覧を貼り付けて設定</label>
+            ${cycle.explicit && cycle.explicit.length ? '<span class="chip" style="font-size:10px; background:#FEF3C7; color:#92400E;">現在: 一覧そのまま（explicit）で運用中</span>' : ''}
+          </div>
+          <textarea id="uc_paste" class="input input-mono" rows="4" placeholder="例:
+1,000時間 A点検
+2,000時間 B点検
++2,000h B点検（+は前行からの間隔）"
+            style="font-size:12px; line-height:1.5;">${escapeHtml(_unitCycleEdit.pasteText || '')}</textarea>
+          <div class="flex items-center justify-between mt-2">
+            <div class="text-[11px] text-[color:var(--ink-muted)]">メーカー資料の「運転時間 点検名」一覧を貼ると、周期設定に自動反映します。規則化できない一覧は書かれたとおり（explicit）に設定します。</div>
+            <button class="btn btn-sm" onclick="analyzeUnitCyclePaste()">解析して反映</button>
           </div>
         </div>
 
