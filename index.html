@@ -902,7 +902,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.37-print-honorific</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span id="appVersionBadge" style="color: var(--gold); margin-left: 6px;">v1.89.39-range-gap</span></div>
         </div>
       </div>
     </div>
@@ -1214,7 +1214,9 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.89.38-horizon-toggle';
+const VERSION = '1.89.39-range-gap';
+// 左上のバージョン表記をVERSION定数から自動反映（手動2箇所更新の同期漏れ対策 v1.89.39）
+try { const _vb = document.getElementById('appVersionBadge'); if (_vb) _vb.textContent = 'v' + VERSION; } catch (e) {}
 
 // ---------- default state ----------
 // ============================================================
@@ -8444,6 +8446,20 @@ function renderScheduleTable(c, u, plan) {
       date: ceDate, source: 'contract-end', contractReason: ce.reason, contractInfo: ce });
   }
 
+  // 「契約終了まで」OFFで予測を範囲で切っているとき、最終点検行の直後に終了帯が
+  // 並ぶと「もうすぐ契約終了」に見えて驚く。範囲より先にある帯の手前に省略行を
+  // 挟み、間の点検が省略されていることを示す (v1.89.39)。
+  if (state.settings.horizonToContract === false) {
+    const _pyrs = state.settings.predictionYears || 5;
+    const _horizonEnd = addDays(new Date(), _pyrs * 365);
+    const _bands = rows.filter(r => (r.source === 'contract-end' || r.source === 'contract-target') && r.date && r.date > _horizonEnd);
+    if (_bands.length) {
+      const _first = _bands.reduce((a, b) => (b.date < a.date ? b : a));
+      rows.push({ type: 'RANGE_GAP', hours: null, nominalHours: null,
+        date: new Date(_first.date.getTime() - 30000), source: 'range-gap', gapYears: _pyrs });
+    }
+  }
+
   const _sdir = tableSort().schedule;
   rows.sort((a,b)=> _sdir === 'asc' ? a.date - b.date : b.date - a.date);
   if (rows.length === 0) {
@@ -8628,6 +8644,15 @@ function renderScheduleTable(c, u, plan) {
           if (r.source === 'skipped') {
             rowStyle = ' style="background:#F5F5F3; color:#9A968B;"';
             statusHtml = '<span class="tag" style="background:#E5E7EB; color:#4B5563;">実施しない</span>';
+          }
+          if (r.source === 'range-gap') {
+            return dividerRow + `
+              <tr style="background:#FAFAF7;">
+                <td class="font-mono text-xs" style="color:var(--ink-muted);">⋮</td>
+                <td colspan="8" class="text-[11px]" style="color:var(--ink-muted);">
+                  〜 予測範囲（${r.gapYears}年）より先の点検は省略しています。契約終了までの点検を見るときは「契約終了まで」をONにしてください 〜
+                </td>
+              </tr>`;
           }
           if (r.source === 'contract-target') {
             const ce = r.contractInfo;
@@ -10111,6 +10136,10 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '1.89.39', items: [
+    '「契約終了まで」をOFFにしたとき、予測範囲より先にある保守契約終了・委託期間終了の帯が最後の点検の直後に並び、もうすぐ終了するように見えていたのを改善。帯の手前に「〜 予測範囲より先の点検は省略しています 〜」の行を挟みます',
+    '左上のバージョン表記が更新されないことがあったのを修正（バージョン番号から自動反映に変更）',
   ]},
   { v: '1.89.38', items: [
     '点検スケジュールに「契約終了まで」チェックを追加（既定ON）。ONのときは従来どおり、確定した契約終了期日が予測範囲より先でも終了までの点検を表示します。OFFにすると予測範囲スライダーの設定どおりに表示を切れるので、印刷を短くまとめたいときに使えます',
