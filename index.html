@@ -899,7 +899,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.35-togo-projected</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.36-defaults-order</span></div>
         </div>
       </div>
     </div>
@@ -1211,7 +1211,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.89.35-togo-projected';
+const VERSION = '1.89.36-defaults-order';
 
 // ---------- default state ----------
 // ============================================================
@@ -5802,6 +5802,17 @@ function renderCustomersList(root) {
   renderCustomerRows();
 }
 
+// Reorder within state.customers itself — the array order IS the saved order,
+// so exports, the dashboard and every other list follow automatically.
+function moveCustomer(customerId, dir) {
+  const i = state.customers.findIndex(c => c.id === customerId);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= state.customers.length) return;
+  [state.customers[i], state.customers[j]] = [state.customers[j], state.customers[i]];
+  saveState();
+  renderCustomerRows();
+}
+
 function renderCustomerRows() {
   const q = (document.getElementById('customerSearch')?.value || '').trim().toLowerCase();
   const filtered = state.customers.filter(c => !q || c.name.toLowerCase().includes(q));
@@ -5832,6 +5843,12 @@ function renderCustomerRows() {
             const r = calcDemandRiskForUnit(c, u);
             if (Object.values(r).some(x=>x.level==='high')) riskCount++;
           }
+          // Reorder arrows only make sense against the FULL list; while a search
+          // filter is active the visible neighbours aren't the real neighbours.
+          const idx = state.customers.indexOf(c);
+          const moveBtns = q ? '' : `
+            <button class="btn btn-ghost btn-xs" onclick="event.stopPropagation(); moveCustomer('${c.id}', -1)" ${idx === 0 ? 'disabled style="opacity:.3;"' : ''} title="上へ">↑</button>
+            <button class="btn btn-ghost btn-xs" onclick="event.stopPropagation(); moveCustomer('${c.id}', 1)" ${idx === state.customers.length - 1 ? 'disabled style="opacity:.3;"' : ''} title="下へ">↓</button>`;
           return `
             <tr class="row-clickable" onclick="if(navGuard(event)) openCustomer('${c.id}')">
               <td><div class="font-semibold">${escapeHtml(c.name)}</div></td>
@@ -5839,7 +5856,7 @@ function renderCustomerRows() {
               <td class="text-right font-mono">${c.units.length}</td>
               <td>${nxt ? `<span class="tag tag-${nxt.type}">${inspTypeLabel(nxt.type)}</span> <span class="text-xs text-[color:var(--ink-muted)] ml-1 font-mono">${fmtDate(nxt.actionDate)}</span>${nxt.isStretched ? '<span class="chip ml-1" style="font-size:9px; background:#FEF3C7; color:#78350F;">前倒</span>' : ''}` : '—'}</td>
               <td>${riskCount > 0 ? `<span class="tag status-warn">${riskCount}台 停止注意</span>` : '<span class="text-xs text-[color:var(--ink-muted)]">—</span>'}</td>
-              <td><button class="btn btn-ghost btn-xs" onclick="event.stopPropagation(); openCustomer('${c.id}')">開く ›</button></td>
+              <td style="white-space: nowrap;">${moveBtns}<button class="btn btn-ghost btn-xs" onclick="event.stopPropagation(); openCustomer('${c.id}')">開く ›</button></td>
             </tr>
           `;
         }).join('')}
@@ -6567,10 +6584,14 @@ function resetUnitSections() {
 function applySectionsToAllUnits() {
   const p = unitSecPref();
   const store = _secPrefStore();
+  // Setting only '*' looked like it did nothing: every unit whose 表示項目 was
+  // ever touched has its own entry, and unitSecPref prefers that over '*'.
+  // Making this the default for ALL units means those per-unit entries go.
+  for (const k of Object.keys(store)) { if (k !== '*') delete store[k]; }
   store['*'] = { hidden: [...p.hidden], order: p.order };
   try { localStorage.setItem(SEC_PREF_KEY, JSON.stringify(store)); } catch (e) {}
   _unitSecPrefCache = {};
-  toast('この設定を全ユニットの既定にしました', 'success');
+  toast('この設定を全ユニットの既定にしました（各ユニットの個別設定はリセット）', 'success');
   renderSectionPrefModal();
 }
 
@@ -10067,6 +10088,10 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '1.89.36', items: [
+    '表示する項目と順番の「全ユニットの既定にする」が、過去に表示項目を触ったことのあるユニットに効かなかったのを修正。個別に調整した設定が既定より優先される仕組みだったため、既定にするときは各ユニットの個別設定をクリアして全ユニットに行き渡らせます（実行時のメッセージにも明記）',
+    '顧客一覧に並び替え（↑↓）を追加。並び順は保存され、ダッシュボードや書き出しなど他の一覧も同じ順になります。絞り込み中は並び替えできません（見えている隣が実際の隣とは限らないため）',
   ]},
   { v: '1.89.35', items: [
     'スケジュール表の「今日から」を、最後に入力された読みではなく今日時点の推定運転時間（投影値）基準に修正。点検記録が最新の読みになっている号機で、最初の行の「今日から」が「前回から」と同じ数字になり、ページ上部の現在の運転時間とも食い違っていました',
