@@ -899,7 +899,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.32-plan-shift</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.33-plan-shift-name</span></div>
         </div>
       </div>
     </div>
@@ -1211,7 +1211,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.89.32-plan-shift';
+const VERSION = '1.89.33-plan-shift-name';
 
 // ---------- default state ----------
 // ============================================================
@@ -3859,6 +3859,15 @@ function computeUnitPlanUncached(customer, unit, opts = {}) {
   // slid one line off. Suppress by the FINAL position too.
   for (let i = predicted.length - 1; i >= 0; i--) {
     if (predicted[i].nominalHours != null && plannedNominals.has(predicted[i].nominalHours)) {
+      // The booking IS this visit. Carry the suppressed row's identity onto the
+      // plan, otherwise the struck-through original name (繰り上げ) and the
+      // deferral note vanish from the schedule along with the duplicate.
+      const pr = predicted[i];
+      const pl = planned.find(x => x.nominalHours === pr.nominalHours);
+      if (pl) {
+        if (pl.shiftedFrom == null && pr.shiftedFrom != null && pr.shiftedFrom !== pr.nominalHours) pl.shiftedFrom = pr.shiftedFrom;
+        if (pl.deferredFrom == null && pr.deferredFrom != null) pl.deferredFrom = pr.deferredFrom;
+      }
       predicted.splice(i, 1);
     }
   }
@@ -4805,6 +4814,8 @@ function computeIntervalWindow(c, u, precomputedPlan) {
       type: p.type,
       date: d,
       source: 'planned',
+      shiftedFrom: p.shiftedFrom != null ? p.shiftedFrom : null,
+      deferredFrom: p.deferredFrom != null ? p.deferredFrom : null,
     });
   }
   for (const p of (plan.predicted || [])) {
@@ -6596,6 +6607,18 @@ function showUnitDiagnostics(customerId, unitId) {
   L.push(`offset=${plan && plan.offsetInfo ? plan.offsetInfo.offset : '-'}`);
   L.push(`predicted=${plan ? (plan.predicted || []).length : 0}件` + (plan && plan.predicted && plan.predicted.length ? ': ' + plan.predicted.slice(0, 8).map(p => `${p.nominalHours}${p.byMonthsRule ? '(月)' : ''}`).join(',') : ''));
   L.push(`skipped=${plan ? (plan.skippedSlots || []).length : 0}件  deferred=${plan ? (plan.deferred || []).length : 0}件`);
+  // 108,542(−158) 級の珍値追跡用: 推奨スケジュール連鎖の生値（位置=実施時間(ズレ)）
+  {
+    const w = safeCall(() => computeIntervalWindow(c, u, plan), null);
+    const rr = (w && plan) ? (safeCall(() => computeRecommendedSchedule(c, u, plan, w, 40), null) || []) : [];
+    L.push(`recSched=${rr.length}件（予測${plan ? (plan.predicted || []).length : 0}件と${plan && rr.length === (plan.predicted || []).length ? '一致' : '不一致→表は生予測表示'}）`);
+    if (rr.length) L.push('  ' + rr.slice(0, 12).map(r =>
+      `${r.shiftedFrom != null ? r.shiftedFrom + '→' : ''}${r.deferredFrom != null ? r.deferredFrom + '⇒' : ''}${r.nominalHours}=${r.execHours != null ? Math.round(r.execHours) : '-'}(${r.offset >= 0 ? '+' : ''}${r.offset})${r.byMonthsCap ? '月' : ''}${r.overdue ? '超' : ''}${r.avoided ? '避' : ''}`
+    ).join(' '));
+    if (w) L.push(`  chain起点: last=${w.hasLast ? `${Math.round(w.lastHours)}h/nominal=${w.last && w.last.nominalHours != null ? w.last.nominalHours : '-'}` : 'なし'} step=${w.step} tol=${w.tol} keepDrift=${!!u.keepDrift}`);
+    const bk = (u.inspectionPlanned || []).filter(p => p.atHours != null);
+    if (bk.length) L.push(`  booked採用候補: ${bk.map(p => `${p.nominalHours != null ? p.nominalHours : '?'}@${Math.round(p.atHours)}h`).join(' ')}`);
+  }
   const ce = plan && plan.contractEnd;
   L.push(`contractEnd=${ce && ce.by ? `${fmtDate(ce.by)} (${ce.reason})` : 'なし'}`);
   L.push(`予測範囲=${state.settings.predictionYears || 5}年`);
@@ -8279,7 +8302,8 @@ function renderScheduleTable(c, u, plan) {
   // combine planned (user-entered), predicted (future), and history (past)
   let rows = [];
   for (const p of plan.planned) {
-    rows.push({ type: p.type, hours: p.atHours, nominalHours: p.nominalHours != null ? p.nominalHours : null, date: new Date(p.date), source: 'planned', note: p.note, planId: p.id });
+    rows.push({ type: p.type, hours: p.atHours, nominalHours: p.nominalHours != null ? p.nominalHours : null, date: new Date(p.date), source: 'planned', note: p.note, planId: p.id,
+      shiftedFrom: p.shiftedFrom != null ? p.shiftedFrom : null, deferredFrom: p.deferredFrom != null ? p.deferredFrom : null });
   }
   // Use the same recommended dates the rest of the screen shows. plan.predicted
   // holds the raw hours-based arrival, which ignores the interval limit and the
@@ -8294,12 +8318,13 @@ function renderScheduleTable(c, u, plan) {
       rows.push({ type: p.type, hours: r.execHours != null ? r.execHours : p.hours,
         nominalHours: p.nominalHours, date: r.date || p.date, source: 'predicted',
         byMonthsCap: r.byMonthsCap, avoided: r.avoided, overdueSlot: r.overdue,
-        shiftedFrom: p.shiftedFrom,
+        shiftedFrom: p.shiftedFrom, deferredFrom: p.deferredFrom != null ? p.deferredFrom : null,
         displayName: p.displayName || '', slotNote: p.slotNote || '' });
     }
   } else {
     for (const p of plan.predicted) {
       rows.push({ type: p.type, hours: p.hours, nominalHours: p.nominalHours, date: p.date, source: 'predicted',
+        shiftedFrom: p.shiftedFrom != null ? p.shiftedFrom : null, deferredFrom: p.deferredFrom != null ? p.deferredFrom : null,
         displayName: p.displayName || '', slotNote: p.slotNote || '' });
     }
   }
@@ -8610,7 +8635,7 @@ function renderScheduleTable(c, u, plan) {
               }
               return fmtHours(r.nominalHours) + ' h';
             })()}</td>
-            <td${r.source === 'skipped' ? ' style="text-decoration: line-through;"' : ''}>${nameCell}${r.slotNote ? `<div class="text-[10px] text-[color:var(--ink-muted)] mt-0.5" style="text-decoration: none !important;"><span style="text-decoration: none !important; display:inline-block;">${escapeHtml(r.slotNote)}</span></div>` : ''}${r.deferTo ? `<div class="text-[10px] mt-0.5" style="text-decoration: none !important; color:#B45309;"><span style="text-decoration: none !important; display:inline-block;">→ ${fmtHours(r.deferTo)}h へ繰り延べ</span></div>` : ''}</td>
+            <td${r.source === 'skipped' ? ' style="text-decoration: line-through;"' : ''}>${nameCell}${r.slotNote ? `<div class="text-[10px] text-[color:var(--ink-muted)] mt-0.5" style="text-decoration: none !important;"><span style="text-decoration: none !important; display:inline-block;">${escapeHtml(r.slotNote)}</span></div>` : ''}${r.deferredFrom != null ? `<div class="text-[10px] mt-0.5" style="text-decoration: none !important; color:#B45309;"><span style="text-decoration: none !important; display:inline-block;">${fmtHours(r.deferredFrom)}h から繰り延べ</span></div>` : ''}${r.deferTo ? `<div class="text-[10px] mt-0.5" style="text-decoration: none !important; color:#B45309;"><span style="text-decoration: none !important; display:inline-block;">→ ${fmtHours(r.deferTo)}h へ繰り延べ</span></div>` : ''}</td>
             <td class="text-right font-mono text-xs">${(() => {
               // Actual hours, with the deviation from the nominal grid shown inline.
               // e.g. an E-check nominally at 24,000h that was done at 23,000h reads "23,000 (-1,000)"
@@ -10020,6 +10045,10 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '1.89.33', items: [
+    '繰り上げ・繰り延べ枠に点検予定を登録すると、元の呼び名の取り消し線表示と「◯◯hから繰り延べ」の注記が予定行から消えていたのを修正（v1.89.32の二重表示解消で名前の引き継ぎが漏れていました）。点検依頼書の次回点検にも同じ注記が付きます',
+    '診断に推奨スケジュールの連鎖の生値（各行の位置・実施時間・ズレ・連鎖起点・予定の採用候補）を追加。実施時間やズレが不自然な値になるケースの特定用です',
   ]},
   { v: '1.89.32', items: [
     'スキップで繰り上げた枠に点検予定を登録すると、その枠の予測行が消えずに予定と二重に表示され、以降の行の実施時間・ズレが1行ずつずれて表示されることがあったのを修正。予定との突き合わせを繰り上げ後の実施位置でも行います',
