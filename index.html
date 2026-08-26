@@ -899,7 +899,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.34-hist-card-shift</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.35-togo-projected</span></div>
         </div>
       </div>
     </div>
@@ -1211,7 +1211,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.89.34-hist-card-shift';
+const VERSION = '1.89.35-togo-projected';
 
 // ---------- default state ----------
 // ============================================================
@@ -8411,6 +8411,14 @@ function renderScheduleTable(c, u, plan) {
   const cycleForGap = getCycleForUnit(u);
   const stepForGap = (cycleForGap && cycleForGap.step) || 2000;
   const tolForGap = state.settings.intervalToleranceHours != null ? state.settings.intervalToleranceHours : 200;
+  // 「今日から」の基準。最後に入力された読みではなく今日時点への投影値を使う —
+  // 点検記録が最新の読みという号機では current がその記録値のままなので、最初の
+  // 行の「今日から」が「前回から」と同じ数字になり、ページ上部の現在の運転時間
+  // （投影値）とも食い違っていた。
+  const projForToGo = safeCall(() => projectHoursToNow(u), null);
+  const nowHoursForToGo = (projForToGo && projForToGo.hours != null)
+    ? projForToGo.hours
+    : (plan.current ? plan.current.hours : null);
   // Compare against the previous row that actually has an hours reading. Contract
   // markers sit in the timeline with hours: null, and subtracting one of those
   // turned the next interval into the full running-hours figure (48,000 instead of
@@ -8423,6 +8431,9 @@ function renderScheduleTable(c, u, plan) {
   // interval to it, or from it to the next one, is meaningless and reads as an
   // error. Leave the column blank for these and don't let them move prevHours.
   if (rows[i].overdueSlot) { rows[i].gapFromPrev = null; continue; }
+  // A skipped/deferred-origin slot is never carried out either — an interval to
+  // or from it is meaningless (a struck row showed 前回から −300).
+  if (rows[i].source === 'skipped') { rows[i].gapFromPrev = null; continue; }
   rows[i].gapFromPrev = prevHours != null ? (h - prevHours) : null;
     prevHours = h;
   }
@@ -8657,8 +8668,8 @@ function renderScheduleTable(c, u, plan) {
               // Hours still to run before this one. The date column is derived from
               // exactly this figure, so seeing it makes an odd-looking date checkable —
               // a seasonal machine can need the same 1,000h in 100 days or in 300.
-              if (r.source === 'history' || r.hours == null || !plan.current) return '<span class="text-[color:var(--ink-muted)]">—</span>';
-              const togo = Math.round(r.hours - plan.current.hours);
+              if (r.source === 'history' || r.source === 'skipped' || r.hours == null || nowHoursForToGo == null) return '<span class="text-[color:var(--ink-muted)]">—</span>';
+              const togo = Math.round(r.hours - nowHoursForToGo);
               if (togo <= 0) return '<span style="color: var(--red);">到達済</span>';
               return `<span class="text-[color:var(--ink-soft)]">${fmtHours(togo)} h</span>`;
             })()}</td>
@@ -10056,6 +10067,10 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '1.89.35', items: [
+    'スケジュール表の「今日から」を、最後に入力された読みではなく今日時点の推定運転時間（投影値）基準に修正。点検記録が最新の読みになっている号機で、最初の行の「今日から」が「前回から」と同じ数字になり、ページ上部の現在の運転時間とも食い違っていました',
+    'スキップ・繰り延べ元の見送り行（取り消し線の行）に「前回から」「今日から」の値が付いていたのを「—」に。実施されない行の間隔は意味を持たないためです',
   ]},
   { v: '1.89.34', items: [
     '点検実施履歴カードの「通常位置」「ズレ」を、スケジュール表と同じ繰り上げ後の実施位置基準に統一。スキップ・繰り延べで枠が動いた記録は元の呼び名を取り消し線で併記し、ズレは実際に埋めた位置との差で表示します（同じ記録が表では+540、カードでは−1,460のように食い違っていました）',
