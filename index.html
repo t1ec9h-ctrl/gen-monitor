@@ -564,6 +564,7 @@ table.data-table tr.row-clickable { cursor: pointer; }
 @media print {
   @page { size: A4 portrait; margin: 12mm 10mm; }
   .no-print { display: none !important; }
+  .print-inline { display: inline !important; }
   body { background: #FFF; font-size: 9.5pt; }
 
   /* ---- Strip the working UI ----------------------------------------------
@@ -834,6 +835,8 @@ table.data-table tr.row-clickable { cursor: pointer; }
   .card > .p-5, .card > .p-6 { break-inside: avoid-page; }
 }
 .print-only { display: none; }
+/* Inline swap: screen shows the bare name, paper shows the courteous one */
+.print-inline { display: none; }
 .timeline-dot {
   width: 10px; height: 10px; border-radius: 50%;
   background: var(--surface); border: 2px solid var(--ink);
@@ -899,7 +902,7 @@ details.collapsible > div { padding: 16px; border: 1px solid var(--border); bord
         </div>
         <div>
           <div class="font-display font-bold text-[17px] leading-none tracking-tight">GEN MONITOR</div>
-          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.36-defaults-order</span></div>
+          <div class="font-mono text-[10px] text-[color:var(--ink-muted)] mt-1">GAS ENGINE MAINTENANCE PLATFORM <span style="color: var(--gold); margin-left: 6px;">v1.89.37-print-honorific</span></div>
         </div>
       </div>
     </div>
@@ -1211,7 +1214,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.89.36-defaults-order';
+const VERSION = '1.89.37-print-honorific';
 
 // ---------- default state ----------
 // ============================================================
@@ -5883,7 +5886,7 @@ function renderCustomerDetail(root) {
     <div class="flex items-start justify-between mb-6 gap-4 flex-wrap">
       <div>
         <div class="font-mono text-[11px] text-[color:var(--ink-muted)] tracking-[0.2em]">CUSTOMER</div>
-        <h1 class="page-heading text-3xl mt-1">${escapeHtml(c.name)}</h1>
+        <h1 class="page-heading text-3xl mt-1"><span class="no-print">${escapeHtml(c.name)}</span><span class="print-inline">${escapeHtml(customerAddressLine(c.name))}</span></h1>
         <div class="flex items-center gap-3 mt-2">
           <span class="text-[color:var(--border-strong)]">·</span>
           <span class="font-mono text-xs text-[color:var(--ink-muted)]">契約電力 ${c.contractPower || 0} kW</span>
@@ -6801,7 +6804,7 @@ function renderUnitDetail(root) {
     <div class="flex items-start justify-between mb-6 gap-4 flex-wrap">
       <div>
         <div class="flex items-center gap-2">
-          <span class="font-mono text-[11px] text-[color:var(--ink-muted)] tracking-[0.2em]">${({engine:'UNIT',chiller:'CHILLER',auxiliary:'AUXILIARY'})[eqType(u)]} · ${escapeHtml(c.name)}</span>
+          <span class="font-mono text-[11px] text-[color:var(--ink-muted)] tracking-[0.2em]">${({engine:'UNIT',chiller:'CHILLER',auxiliary:'AUXILIARY'})[eqType(u)]} · <span class="no-print">${escapeHtml(c.name)}</span><span class="print-inline">${escapeHtml(customerAddressLine(c.name))}</span></span>
         </div>
         <h1 class="page-heading text-3xl mt-1 flex items-center gap-3">
           ${escapeHtml(u.tag)}
@@ -10088,6 +10091,9 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '1.89.37', items: [
+    'ユニットページ・顧客ページを印刷すると、見出しの顧客名が敬称なしのまま出ていたのを修正。印刷時は点検計画書と同じ敬称付き（「御中」、既に敬称が入っている名前はそのまま）に切り替わります。画面表示は従来どおり素の名前です',
   ]},
   { v: '1.89.36', items: [
     '表示する項目と順番の「全ユニットの既定にする」が、過去に表示項目を触ったことのあるユニットに効かなかったのを修正。個別に調整した設定が既定より優先される仕組みだったため、既定にするときは各ユニットの個別設定をクリアして全ユニットに行き渡らせます（実行時のメッセージにも明記）',
