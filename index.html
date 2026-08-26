@@ -1112,7 +1112,7 @@ async function restoreSnapshot(id) {
     // Snapshot the current state first, so an unwanted restore can be undone
     await takeSnapshot('pre-restore', { silent: true, note: '復元操作の直前' });
 
-    state = { ...defaultState(), ...data, settings: { ...defaultState().settings, ...(data.settings || {}) } };
+    state = adoptState(data);
     for (const c of state.customers || []) {
       if (c.hourlyPower) c.hourlyPower = c.hourlyPower.map(decompressHourlyRow);
     }
@@ -1203,7 +1203,7 @@ function restoreBackup(slot) {
       ? `\n\n⚠ このバックアップに受電1時間値は含まれていません。\n現在の受電データ ${curHourly.toLocaleString()} 件は失われ、CSVの再取込が必要になります。`
       : '';
     if (!confirm(`バックアップ#${slot} (${parsed.meta.savedAt}, ${parsed.meta.sizeKB}KB)を復元します。\n現在のデータは上書きされます。${warn}\n\nよろしいですか？`)) return;
-    state = { ...defaultState(), ...data, settings: { ...defaultState().settings, ...(data.settings || {}) } };
+    state = adoptState(data);
     for (const c of state.customers || []) {
       if (c.hourlyPower) c.hourlyPower = c.hourlyPower.map(decompressHourlyRow);
     }
@@ -1214,9 +1214,72 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.90.0';
+const VERSION = '2.0.0-schema';
 // 左上のバージョン表記をVERSION定数から自動反映（手動2箇所更新の同期漏れ対策 v1.89.39）
 try { const _vb = document.getElementById('appVersionBadge'); if (_vb) _vb.textContent = 'v' + VERSION; } catch (e) {}
+
+// ============================================================
+//  SCHEMA VERSION & MIGRATIONS (v2.0.0)
+// ============================================================
+// 保存データ・書き出しファイルに版番号を持たせ、読み込み時に一度だけ現行形式へ
+// 自動変換する。これまで「plugReplacedが無い旧記録は判定側で読み替える」等の
+// 互換パッチが読み取り側に散らばっていたのを、書き込み時点で正規化する方式へ。
+// 版なし（v1系のlocalStorage・書き出しファイル）は schemaVersion=1 とみなす。
+const SCHEMA_VERSION = 2;
+
+// 各移行は「その版から次の版へ」の関数。dataを直接書き換えてよい。
+const SCHEMA_MIGRATIONS = {
+  // 1 → 2: 暗黙だった既定値・互換ルールをデータ側に固定化（挙動は不変）
+  1: (data) => {
+    for (const c of data.customers || []) {
+      if (!Array.isArray(c.units)) c.units = [];
+      if (!Array.isArray(c.hourlyPower)) c.hourlyPower = [];
+      for (const u of c.units) {
+        for (const k of ['hoursLog', 'inspectionHistory', 'inspectionPlanned', 'monthlyOperation', 'calendarInspections']) {
+          if (!Array.isArray(u[k])) u[k] = [];
+        }
+        // v1.87.5の判定ルールをデータに明示: フィールドが無い旧記録は
+        // 通常種別なら交換扱い、OTHER/initialは明示trueのみ、PLUGは常にtrue。
+        for (const h of u.inspectionHistory) {
+          if (h.plugReplaced === undefined) {
+            h.plugReplaced = (h.type === 'PLUG') ? true : (h.type !== 'OTHER' && h.type !== 'initial');
+          }
+        }
+      }
+    }
+    return data;
+  },
+};
+
+// dataを現行版まで順に移行する。将来版（新しいアプリで保存されたデータ）は
+// 変換せずfutureフラグで返し、旧アプリが新データを壊さないようにする。
+function migrateSchema(data) {
+  if (!data || typeof data !== 'object') return { data, from: null, future: false };
+  const from = Number.isFinite(data.schemaVersion) ? data.schemaVersion : 1;
+  if (from > SCHEMA_VERSION) return { data, from, future: true };
+  let d = data;
+  for (let v = from; v < SCHEMA_VERSION; v++) {
+    const mig = SCHEMA_MIGRATIONS[v];
+    if (typeof mig === 'function') d = mig(d) || d;
+  }
+  d.schemaVersion = SCHEMA_VERSION;
+  return { data: d, from, future: false };
+}
+
+// state全体を差し替える全経路（起動読込・バックアップ復元・JSON読み込み・
+// ファイル同期）の共通入口。既定値マージ→schema移行を一箇所に集約し、
+// 個別経路が移行を呼び忘れる事故を防ぐ。
+function adoptState(data) {
+  const def = defaultState();
+  const merged = { ...def, ...(data || {}), settings: { ...def.settings, ...((data && data.settings) || {}) } };
+  // 既定stateは現行版を名乗るため、マージで元データの版が上書きされる。
+  // 「元データが名乗っていた版」（無ければ1）を復元してから移行にかける —
+  // これを忘れると版なしの旧データが移行済み扱いになり、移行が丸ごと飛ぶ。
+  merged.schemaVersion = Number.isFinite(data && data.schemaVersion) ? data.schemaVersion : 1;
+  const mig = migrateSchema(merged);
+  if (mig.future) mig.data._schemaFuture = mig.from;
+  return mig.data;
+}
 
 // ---------- default state ----------
 // ============================================================
@@ -1471,6 +1534,7 @@ async function removeDemoData() {
 function defaultState() {
   return {
     version: VERSION,
+    schemaVersion: SCHEMA_VERSION,
     customers: [],
     settings: {
       warningDaysYellow: 90,
@@ -1617,7 +1681,13 @@ function loadState() {
     // Pass through the _lightweight flag — restoreSyncFileHandle uses this to decide
     // whether to reload the full data from the sync file on boot.
     if (data._lightweight) merged._lightweight = true;
-    return merged;
+    // schema移行 (v2.0.0): 上のアドホックな正規化のあと、版番号ベースの移行を通す。
+    // 既定stateのschemaVersion（現行版）がマージで混ざるため、元データが名乗って
+    // いた版（無ければ1）へ戻してから移行にかける。
+    merged.schemaVersion = Number.isFinite(data.schemaVersion) ? data.schemaVersion : 1;
+    const mig = migrateSchema(merged);
+    if (mig.future) mig.data._schemaFuture = mig.from;
+    return mig.data;
   } catch(e) {
     console.error('load failed', e);
     return defaultState();
@@ -1755,7 +1825,7 @@ async function restoreSyncFileHandle() {
         }
 
         // Safe to load from file
-        state = { ...defaultState(), ...data, settings: { ...defaultState().settings, ...(data.settings || {}) } };
+        state = adoptState(data);
         for (const c of state.customers || []) {
           if (c.hourlyPower) c.hourlyPower = c.hourlyPower.map(decompressHourlyRow);
         }
@@ -1844,7 +1914,7 @@ async function reconnectSyncFile() {
     }
 
     // Safe to load
-    state = { ...defaultState(), ...data, settings: { ...defaultState().settings, ...(data.settings || {}) } };
+    state = adoptState(data);
     for (const c of state.customers || []) {
       if (c.hourlyPower) c.hourlyPower = c.hourlyPower.map(decompressHourlyRow);
     }
@@ -1902,7 +1972,7 @@ async function connectSyncFile(mode /* 'open' | 'save' */) {
             return;
           }
         }
-        state = { ...defaultState(), ...data, settings: { ...defaultState().settings, ...(data.settings || {}) } };
+        state = adoptState(data);
         // Decompress hourly rows
         for (const c of state.customers || []) {
           if (c.hourlyPower) c.hourlyPower = c.hourlyPower.map(decompressHourlyRow);
@@ -10158,6 +10228,10 @@ const CHANGELOG = [
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
   ]},
+  { v: '2.0.0', items: [
+    '保存データと書き出しファイルに版番号（schemaVersion）を導入。読み込み・取込・バックアップ復元・ファイル同期のすべての経路で、旧い形式のデータを一度だけ現行形式へ自動変換します。今後のバージョンアップでデータ形式が変わっても、開くだけで安全に引き継がれます',
+    '新しい版のアプリで保存されたデータを旧いアプリで開いたときは、上書き保存で情報が欠ける可能性がある旨を起動時に警告します',
+  ]},
   { v: '1.90.0', items: [
     'v1.89系のまとめリリース。予定→実施のワンクリック記録、専用サイクルの一覧貼り付け、契約終了までの表示トグルと省略行、履歴・予定・繰り上げ表示の整合修正、印刷改善、内部エラーの可視化までを含む安定版です',
   ]},
@@ -16590,6 +16664,7 @@ function exportCustomerData(customerId) {
   const payload = {
     type: 'gen-monitor-customer',
     version: 2,
+    schemaVersion: SCHEMA_VERSION,
     exportedAt: new Date().toISOString(),
     customer: {
       ...c,
@@ -16679,6 +16754,7 @@ function exportCustomersBulk() {
   const payload = {
     type: 'gen-monitor-customers',
     version: 2,
+    schemaVersion: SCHEMA_VERSION,
     exportedAt: new Date().toISOString(),
     customers: targets.map(c => ({ ...c, hourlyPower: (c.hourlyPower || []).map(compressHourlyRow) })),
     inspectionCycles: cycles,
@@ -17213,10 +17289,14 @@ function _mergeImportedCycles(data) {
     if (!state.inspectionCycles[k]) state.inspectionCycles[k] = JSON.parse(JSON.stringify(v));
   }
 }
-function _importOneCustomer(incRaw, mode) {
+function _importOneCustomer(incRaw, mode, fileSchema) {
   const inc = JSON.parse(JSON.stringify(incRaw));
   // Decompress hourly rows back to the in-memory shape
   inc.hourlyPower = (inc.hourlyPower || []).map(decompressHourlyRow);
+  // schema移行 (v2.0.0): 旧版の書き出しファイルも取込時に現行形式へ正規化。
+  // 将来版のファイルは変換せずそのまま取り込む（可能な範囲で読む）。
+  const _m = migrateSchema({ schemaVersion: Number.isFinite(fileSchema) ? fileSchema : 1, customers: [inc] });
+  if (_m.future) toast(`このファイルは新しい版（schema v${_m.from}）で書き出されています。アプリの更新をおすすめします`, 'error', 6000);
   if (mode === 'replace') {
     const idx = state.customers.findIndex(x => x.name === inc.name);
     if (idx >= 0) {
@@ -17249,7 +17329,7 @@ async function execCustomerImport(mode) {
   await takeSnapshot('pre-restore', { silent: true, note: '物件データ取込の直前' });
   const adopted = _adoptImportSettings(data);
   _mergeImportedCycles(data);
-  const name = _importOneCustomer(data.customer, mode);
+  const name = _importOneCustomer(data.customer, mode, data.schemaVersion);
   saveState();
   window._custImport = null;
   closeModal();
@@ -17264,7 +17344,7 @@ async function execCustomerImportMulti(mode) {
   const adopted = _adoptImportSettings(data);
   _mergeImportedCycles(data);
   const names = [];
-  for (const c of data.customers) names.push(_importOneCustomer(c, mode));
+  for (const c of data.customers) names.push(_importOneCustomer(c, mode, data.schemaVersion));
   saveState();
   window._custImport = null;
   closeModal();
@@ -18634,7 +18714,7 @@ function importFullBackupInner(event) {
       const data = JSON.parse(e.target.result);
       if (!data.customers) throw new Error('不正なファイル形式');
       if (!confirm('現在のデータを上書きします。続行しますか？（事前にバックアップを推奨）')) return;
-      state = { ...defaultState(), ...data, settings: { ...defaultState().settings, ...(data.settings||{}) } };
+      state = adoptState(data);
       saveState();
       showPage('dashboard');
       toast('バックアップを読み込みました','success');
@@ -18658,6 +18738,10 @@ function escapeHtml(s) {
 //  BOOT
 // ============================================================
 showPage('dashboard');
+// 新しいアプリで保存されたデータを旧アプリで開いたときの注意 (v2.0.0)
+if (state && state._schemaFuture) {
+  toast(`このデータは新しい版（schema v${state._schemaFuture}）で保存されています。表示は続けられますが、保存すると新しい版の情報が欠ける可能性があります。アプリを最新版に更新してください`, 'error', 9000);
+}
 
 // seed with demo data if empty (first launch)
 if (state.customers.length === 0) {
