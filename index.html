@@ -1214,7 +1214,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '1.89.37-print-honorific';
+const VERSION = '1.89.38-horizon-toggle';
 
 // ---------- default state ----------
 // ============================================================
@@ -1476,6 +1476,7 @@ function defaultState() {
       demandRiskHigh: 0.9,
       demandRiskMedium: 0.7,
       predictionYears: 5,
+      horizonToContract: true, // 確定契約期日まで予測範囲を自動延長するか
       fiscalYearStartMonth: 4, // 4月始まり=日本の標準会計年度
       calendarInspectionPresets: defaultCalendarPresets(),
       intervalToleranceHours: 200, // 前回実施からの間隔に対する許容幅（±h）
@@ -3448,7 +3449,11 @@ function computeUnitPlanUncached(customer, unit, opts = {}) {
   // A firm contract end BEYOND the prediction window would cut the very
   // inspections the contract still covers — a once-a-year unit showed only the
   // first few of its remaining rounds. Extend the horizon to the contract.
-  {
+  // Toggleable (horizonToContract, default ON): with it OFF the user-set
+  // prediction range wins even when it cuts contract-covered inspections —
+  // wanted for short printouts. Legacy saved states lack the key, so the
+  // check is !== false rather than truthy.
+  if (state.settings.horizonToContract !== false) {
     const dailyRough0 = model.fallback ? (model.fallback / 30) : 2;
     let yrsNeed = 0;
     // Firm or quoted end DATE: reach it (+ a season for the target case, since
@@ -3505,7 +3510,7 @@ function computeUnitPlanUncached(customer, unit, opts = {}) {
         // hours, so the milestone horizon must hold enough NOMINAL slots to
         // reach a fixed contract end — the hours-based horizon alone doesn't.
         const endD = unit.contractEndDate ? new Date(unit.contractEndDate) : null;
-        if (endD && !isNaN(endD)) {
+        if (endD && !isNaN(endD) && state.settings.horizonToContract !== false) {
           const monthsSpan = Math.max(0, (endD - new Date(current.ts)) / (30.44 * 24 * 3600 * 1000));
           const slotsNeeded = Math.ceil(monthsSpan / mm) + 3;
           const listed = cycMm.explicit.map(e => e.hours).sort((a, b) => a - b);
@@ -7437,6 +7442,9 @@ function renderUnitDetail(root) {
           <label class="text-[11px] font-mono text-[color:var(--ink-muted)] tracking-wider">予測範囲</label>
           <input id="yearsSlider" type="range" min="1" max="20" value="${state.settings.predictionYears}" oninput="handleYearsChange(this.value)" style="width: 150px;">
           <span class="font-mono text-xs" id="yearsSliderVal">${state.settings.predictionYears}年</span>
+          <label class="text-[11px] font-mono text-[color:var(--ink-muted)] tracking-wider flex items-center gap-1" style="cursor:pointer;" data-tip="ONのとき、確定した契約終了期日が予測範囲より先にあれば、終了までの点検を範囲を超えて表示します。印刷を短くまとめたいときはOFFにすると予測範囲どおりに切れます">
+            <input type="checkbox" ${state.settings.horizonToContract !== false ? 'checked' : ''} onchange="toggleHorizonContract(this.checked)">契約終了まで
+          </label>
           <button class="btn btn-sm" onclick="openPlanModal('${c.id}','${u.id}')">予定登録</button>
         </div>
       </div>
@@ -8305,6 +8313,18 @@ function setSchedPastYears(val) {
   state.settings.schedPastYears = parseInt(val, 10) || 0;
   saveState();
   showPageKeepingScroll('unit-detail');
+}
+
+function toggleHorizonContract(on) {
+  state.settings.horizonToContract = !!on;
+  saveState();
+  const c = state.customers.find(x=>x.id===currentCustomerId);
+  const u = c && c.units.find(x=>x.id===currentUnitId);
+  if (!c || !u) return;
+  const plan = computeUnitPlan(c, u);
+  renderScheduleTable(c, u, plan);
+  if (chartRefs.cum) { try{ chartRefs.cum.destroy(); }catch(e){} }
+  renderCumulativeChart(c, u, plan);
 }
 
 function handleYearsChange(v) {
@@ -10091,6 +10111,9 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '1.89.38', items: [
+    '点検スケジュールに「契約終了まで」チェックを追加（既定ON）。ONのときは従来どおり、確定した契約終了期日が予測範囲より先でも終了までの点検を表示します。OFFにすると予測範囲スライダーの設定どおりに表示を切れるので、印刷を短くまとめたいときに使えます',
   ]},
   { v: '1.89.37', items: [
     'ユニットページ・顧客ページを印刷すると、見出しの顧客名が敬称なしのまま出ていたのを修正。印刷時は点検計画書と同じ敬称付き（「御中」、既に敬称が入っている名前はそのまま）に切り替わります。画面表示は従来どおり素の名前です',
