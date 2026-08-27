@@ -52,6 +52,15 @@ button[data-tip], [data-tip].btn { cursor: pointer; }
 }
 [data-tip].tip-right:hover::after { left: auto; right: 0; transform: none; }
 @media print {
+  /* 印刷は画面より色が沈むため、文字と罫線を濃色に上書き (v2.4.6)。
+     「全体的に薄くて見えづらい」対応。アクセント色はそのまま。 */
+  :root {
+    --ink: #000000;
+    --ink-soft: #1F2328;
+    --ink-muted: #3A404A;
+    --border: #AFA99A;
+    --border-strong: #857E6E;
+  }
   /* 既定で90%縮小 (v2.4.1): 実運用で90%がちょうど良いとの本人実測。
      1ページに収まる量が増え、先頭ページ下部の空きも軽減される。 */
   body { zoom: 0.9; }
@@ -1221,7 +1230,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '2.4.5-print-window-first';
+const VERSION = '2.4.6-print-ink';
 // 左上のバージョン表記をVERSION定数から自動反映（手動2箇所更新の同期漏れ対策 v1.89.39）
 try { const _vb = document.getElementById('appVersionBadge'); if (_vb) _vb.textContent = 'v' + VERSION; } catch (e) {}
 
@@ -7217,7 +7226,13 @@ function renderUnitDetail(root) {
       <div class="stat-card">
         <div class="stat-label">直近点検</div>
         ${(() => {
-          const latest = [...(u.inspectionHistory || [])].sort((a,b)=> new Date(b.date) - new Date(a.date))[0];
+          // エンジンの周期点検を主表示にする (v2.4.6)。巡回記録が最新だと
+          // 肝心のA/B点検が隠れるため、CAL/プラグ単独/その他は除いて選ぶ。
+          // それより新しい作業があればヒントに小さく併記。
+          const _hist = [...(u.inspectionHistory || [])].sort((a,b)=> new Date(b.date) - new Date(a.date));
+          const latest = _hist.find(x => !x.calendarInspectionId && x.type !== 'PLUG' && x.type !== 'OTHER') || _hist[0] || null;
+          const newestAny = _hist[0] || null;
+          const newerWork = (latest && newestAny && newestAny !== latest && new Date(newestAny.date) > new Date(latest.date)) ? newestAny : null;
           return `
           <div class="stat-value font-mono" style="font-size: 20px;">${latest
             ? `<span class="tag tag-${latest.type} align-middle">${latest.nominalHours != null ? `${fmtHours(latest.nominalHours)}h ` : ''}${inspTypeLabel(latest.type)}</span>`
@@ -7233,6 +7248,7 @@ function renderUnitDetail(root) {
                 return `${fmtDate(latest.date)}　@${fmtHours(latest.atHours)}h${eff != null ? `（${latest.atHours - eff > 0 ? '+' : ''}${Math.round(latest.atHours - eff)}h）` : ''}`;
               })()
             : '履歴なし'}</div>
+          ${newerWork ? `<div class="stat-hint" style="margin-top: 2px;">最新の作業: ${escapeHtml(inspTypeLabel(newerWork.type))} ${fmtDate(newerWork.date)}</div>` : ''}
           `;
         })()}
       </div>
@@ -10775,6 +10791,10 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '2.4.6', items: [
+    '印刷が全体的に薄くて見えづらかったため、印刷時のみ文字色と罫線を濃くしました（画面の見た目は変わりません）',
+    'ユニット詳細の「直近点検」カードは、エンジンの周期点検（A/B/Cなど）を表示するようにしました。巡回点検などの記録が最新でもA/B点検が隠れません。周期点検より新しい作業がある場合は、下に「最新の作業: ◯◯ 日付」を小さく併記します',
   ]},
   { v: '2.4.5', items: [
     '報告書印刷のとき、「次回点検はいつまでに」を自動で先頭カードにして1ページ目に入れるようにしました。画面の表示順は変わらず、印刷が終わると元の並びに戻ります（表示項目で非表示にしている場合は出ません）',
