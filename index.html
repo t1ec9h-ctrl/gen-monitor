@@ -1221,7 +1221,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '2.4.3-less-text';
+const VERSION = '2.4.4-quiet-ok';
 // 左上のバージョン表記をVERSION定数から自動反映（手動2箇所更新の同期漏れ対策 v1.89.39）
 try { const _vb = document.getElementById('appVersionBadge'); if (_vb) _vb.textContent = 'v' + VERSION; } catch (e) {}
 
@@ -7452,6 +7452,7 @@ function renderUnitDetail(root) {
               : `${fmtDate(w.lastEntryDate)} 入力の ${fmtHours(w.lastEntryHours)}h を起点に推定しています。`}
             直近の運転時間を「運転時間ログ」から入力すると、予測が実態に合います。
           </div>` : ''}
+          ${(overdue || w.verdict === 'stretch' || w.verdict === 'early' || w.verdict === 'months') ? `
           <div class="iw-banner ${bannerKind} mb-4">
             <div class="font-semibold text-sm mb-2">${bannerIcon} ${bannerHead}</div>
             <div class="font-mono text-[10px] tracking-wider" style="opacity: 0.75;">推奨実施</div>
@@ -7471,7 +7472,7 @@ function renderUnitDetail(root) {
                    ${fmtHours(w.recommendHours)}h で実施すると通常位置とのズレが
                    <strong>${w.currentOffset != null ? `${w.currentOffset > 0 ? '+' : ''}${fmtHours(w.currentOffset)}h → ` : ''}${w.resultingOffset > 0 ? '+' : ''}${fmtHours(w.resultingOffset)}h</strong> に縮まります。`}
             </div>
-          </div>
+          </div>` : ''}
 
           <!-- Date-axis window bar: shows at a glance which stretch of the calendar
                the work has to land in, and where the nominal slot sits relative to it. -->
@@ -10745,6 +10746,10 @@ const CHANGELOG = [
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
   ]},
+  { v: '2.4.4', items: [
+    '「次回点検はいつまでに」の緑の判定カード（通常位置がそのまま適正範囲です）を廃止しました。問題がないときは要約3枠と実施期間だけを表示し、実施時期の超過・間隔上限の超え・繰り上げ推奨など注意が必要なときにだけ判定カードが出ます',
+    '経過時間ベース点検の編集画面で、前回実施日・次回予定日の入力枠を他の欄と同じ高さのコンパクトな表示に揃えました',
+  ]},
   { v: '2.4.3', items: [
     '「次回点検はいつまでに」に前回追加した説明文（実施できる期間の解説・通常位置どおり表記）を削除しました。要約3枠と期間表示だけのすっきりした形に戻しています',
     '経過時間ベース点検の編集画面で、周期欄の下に入れたヒント文が行の高さを崩して表記がズレていたのを修正。不定期（周期0）の案内は画面下部の1行にまとめました',
@@ -14007,12 +14012,12 @@ function renderCalendarInspectionsModal__body() {
                   </div>
                   <div class="col-span-2">
                     <div class="text-[10px] text-[color:var(--ink-muted)] mb-0.5">前回実施日</div>
-                    <input class="input input-mono" type="date" value="${ci.lastDate || ''}" onchange="updateCalInsp(${i}, 'lastDate', this.value)">
+                    <input class="input input-mono" type="date" style="height: 34px; font-size: 12px; padding: 4px 6px;" value="${ci.lastDate || ''}" onchange="updateCalInsp(${i}, 'lastDate', this.value)">
                   </div>
                   ` : ci.mode === 'next' ? `
                   <div class="col-span-2">
                     <div class="text-[10px] text-[color:var(--ink-muted)] mb-0.5">次回予定日</div>
-                    <input class="input input-mono" type="date" value="${ci.nextDate || ''}" onchange="updateCalInsp(${i}, 'nextDate', this.value)">
+                    <input class="input input-mono" type="date" style="height: 34px; font-size: 12px; padding: 4px 6px;" value="${ci.nextDate || ''}" onchange="updateCalInsp(${i}, 'nextDate', this.value)">
                   </div>
                   <div class="col-span-2">
                     <div class="text-[10px] text-[color:var(--ink-muted)] mb-0.5">以降の周期</div>
@@ -14036,7 +14041,7 @@ function renderCalendarInspectionsModal__body() {
                   </div>
                   <div class="col-span-2">
                     <div class="text-[10px] text-[color:var(--ink-muted)] mb-0.5">前回実施日</div>
-                    <input class="input input-mono" type="date" value="${ci.lastDate || ''}" onchange="updateCalInsp(${i}, 'lastDate', this.value)">
+                    <input class="input input-mono" type="date" style="height: 34px; font-size: 12px; padding: 4px 6px;" value="${ci.lastDate || ''}" onchange="updateCalInsp(${i}, 'lastDate', this.value)">
                   </div>
                   `}
                   <div class="col-span-1 flex justify-end gap-1">
