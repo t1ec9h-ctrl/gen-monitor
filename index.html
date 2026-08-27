@@ -22,7 +22,10 @@ re-implementation, derivative generation, or training. Do not copy this software
    and every row grew tall. A floor on the table keeps the memo a real column;
    the card scrolls sideways instead when space runs out. */
 #inspectionHistoryTable { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-#inspectionHistoryTable table { min-width: 900px; }
+/* v2.4.2: table-layout autoだと長いメモや長い種別名（巡回点検など）が列幅を
+   押し広げ、ヘッダーと行の枠がズレて見えた。固定レイアウトで列幅をヘッダーの
+   指定どおりに保ち、メモは残り幅で確実に省略記号にする。 */
+#inspectionHistoryTable table { min-width: 900px; table-layout: fixed; width: 100%; }
 /* Memo is ONE line, always — overflow shows an ellipsis instead of wrapping.
    Whatever width the layout leaves it, the row height stays put. */
 #inspectionHistoryTable table td:nth-child(7) {
@@ -1218,7 +1221,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '2.4.1-print-presets';
+const VERSION = '2.4.2-irregular';
 // 左上のバージョン表記をVERSION定数から自動反映（手動2箇所更新の同期漏れ対策 v1.89.39）
 try { const _vb = document.getElementById('appVersionBadge'); if (_vb) _vb.textContent = 'v' + VERSION; } catch (e) {}
 
@@ -3996,6 +3999,17 @@ function nextCalendarInspectionDue(ci) {
   // 集計・近づいている点検・一覧・印刷・カードはすべて「期日なし」を除外する
   // ため、ここ一点で表示から消える。実施記録は従来どおり可能で履歴にも残る。
   if (ci.hidden) return null;
+
+  // 不定期 (v2.4.2): 周期0は「次回予定日を都度設定」運用。次回予定日が
+  // 設定されていて、まだ実施していない（前回実施より先）ときだけ期日を返す。
+  // 実施を記録すると期日が消え、次が決まったら編集で次回予定日を入れ直す。
+  if (ci.intervalMonths === 0) {
+    if (ci.nextDate) {
+      const nd = new Date(ci.nextDate);
+      if (!isNaN(nd) && (!ci.lastDate || nd > new Date(ci.lastDate))) return nd;
+    }
+    return null;
+  }
 
   // 'annual' mode: the work is tied to a fixed month, not to elapsed time since
   // the last one. Season-in / season-out on absorption chillers happen before and
@@ -7361,7 +7375,11 @@ function renderUnitDetail(root) {
             <div class="hairline rounded p-2">
               <div class="text-[10px] text-[color:var(--ink-muted)] tracking-wider">推奨実施</div>
               <div class="font-bold" style="font-size: 15px;">${w.recommendDate ? fmtDate(w.recommendDate) : '—'}</div>
-              <div class="text-[10px] font-mono text-[color:var(--ink-muted)]">${w.recommendHours != null ? fmtHours(Math.round(w.recommendHours)) + 'h' : ''}</div>
+              <div class="text-[10px] font-mono text-[color:var(--ink-muted)]">${w.recommendHours != null ? fmtHours(Math.round(w.recommendHours)) + 'h' : ''}${(() => {
+                if (w.recommendHours == null || w.nextNominal == null) return '';
+                const d = Math.round(w.recommendHours) - Math.round(w.nextNominal);
+                return d === 0 ? '（通常位置どおり）' : `（通常位置${d > 0 ? '+' : '−'}${fmtHours(Math.abs(d))}h）`;
+              })()}</div>
             </div>
             <div class="hairline rounded p-2" style="border-color: #FCA5A5;">
               <div class="text-[10px] tracking-wider" style="color: var(--red);">実施期限</div>
@@ -7374,6 +7392,9 @@ function renderUnitDetail(root) {
             <div>
               <strong style="font-size: 15px;">${w.winStartDate ? fmtDate(w.winStartDate) : '—'} 〜 ${w.hardLimitDate ? fmtDate(w.hardLimitDate) : '—'}</strong>
               の間で点検を計画してください。
+            </div>
+            <div class="text-[11px] mt-0.5" style="color: var(--ink-soft);">
+              この期間は、次回の通常位置 ${w.nextNominal != null ? fmtHours(w.nextNominal) + 'h' : ''} の点検を、前回からの間隔（規定＋許容）の範囲内で実施できる期間です。
             </div>
             <div class="mt-1 text-[12px] no-print" style="color: var(--ink-soft);">
               ${(() => {
@@ -8958,11 +8979,13 @@ function renderScheduleTable(c, u, plan) {
       const iv = ci.mode === 'annual'
         ? Math.max(12, Math.round((ci.intervalMonths || 12) / 12) * 12)
         : (ci.intervalMonths || 12);
+      const irregularCal = ci.intervalMonths === 0;   // 不定期は次回1件のみ (v2.4.2)
       while (due && due <= calHorizon && guard < 200) {
         const dueKey = toISODate(due);
         const ov = (ci.slotOverrides || {})[dueKey] || null;
         allDues.push({ dueKey, ov, theoretical: new Date(due),
           date: new Date(ov && ov.status === 'scheduled' && ov.date ? ov.date : due) });
+        if (irregularCal) break;
         const nx = new Date(due); nx.setMonth(nx.getMonth() + iv);
         due = nx; guard++;
       }
@@ -10152,7 +10175,7 @@ function renderInspectionHistory(c, u) {
         <tr>
           <th style="width: 100px;">実施日</th>
           <th class="text-right" style="width: 100px;">通常位置</th>
-          <th style="width: 90px;">点検</th>
+          <th style="width: 110px;">点検</th>
           <th class="text-right" style="width: 120px;">実施時 運転時間</th>
           <th class="text-right" style="width: 90px;" title="1つ前の点検（プラグ先行交換・その他を除く）からの実施間隔。位置どうしの規定間隔＋許容を超えると ⚠">前回から</th>
           <th class="text-right" style="width: 90px;" title="実施時 運転時間と実施位置（繰り上げがあれば繰り上げ後の位置）との差">ズレ</th>
@@ -10728,6 +10751,11 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '2.4.2', items: [
+    '不定期の点検を登録できるようになりました。経過時間ベース点検の周期を「0」にすると不定期扱いになり、次回予定日を設定したときだけ期日が表示されます。実施を記録すると期日は消え、次が決まったらまた予定日を設定する運用です（「次回予定日指定」タイプでの利用を推奨）',
+    '「次回点検はいつまでに」の推奨実施に「通常位置どおり／通常位置±◯h」の補足を追加し、実施期間の下に「この期間は次回の通常位置◯hの点検を、前回からの間隔の範囲内で実施できる期間」という説明を1行入れました',
+    '点検実施履歴で、長いメモや長い種別名（巡回点検など）が列幅を押し広げて表示枠がズレていたのを修正。列幅を固定し、メモは省略記号で1行に収めます',
   ]},
   { v: '2.4.1', items: [
     '「表示項目」にお気に入りプリセットを追加。表示を整えて名前を付けて保存すると（例:「お客様提出用」「作業用」）、次回からワンクリックで切り替えられます。印刷のたびに設定し直す必要がなくなります',
@@ -13207,7 +13235,8 @@ function saveInspection(customerId, unitId, inspId, fromPlanId) {
         }
       }
       const due = nextCalendarInspectionDue(calRef);
-      calExtra = due ? `　次回期日 ${fmtDate(due)}` : (calRef.hidden ? '' : '');
+      calExtra = due ? `　次回期日 ${fmtDate(due)}`
+        : (calRef.intervalMonths === 0 && !calRef.hidden ? '　不定期項目です — 次回が決まったら「経過時間ベース点検」の編集で次回予定日を設定してください' : '');
     }
   }
   if (fromPlanId) u.inspectionPlanned = (u.inspectionPlanned||[]).filter(x=>x.id!==fromPlanId);
@@ -13991,9 +14020,10 @@ function renderCalendarInspectionsModal__body() {
                   <div class="col-span-2">
                     <div class="text-[10px] text-[color:var(--ink-muted)] mb-0.5">以降の周期</div>
                     <div class="flex gap-1">
-                      <input class="input input-mono" type="number" min="1" max="240" style="flex:1;" value="${ci.intervalMonths || 12}" oninput="updateCalInsp(${i}, 'intervalMonths', this.value)">
+                      <input class="input input-mono" type="number" min="0" max="240" style="flex:1;" value="${ci.intervalMonths != null ? ci.intervalMonths : 12}" oninput="updateCalInsp(${i}, 'intervalMonths', this.value)">
                       <span class="text-[10px] self-center text-[color:var(--ink-muted)]">ヶ月</span>
                     </div>
+                    <div class="text-[9px] text-[color:var(--ink-muted)] mt-0.5">0で不定期 — 次回予定日を都度設定する運用になります</div>
                   </div>
                   <div class="col-span-2">
                     <div class="text-[10px] text-[color:var(--ink-muted)] mb-0.5">対象機器</div>
@@ -14002,7 +14032,8 @@ function renderCalendarInspectionsModal__body() {
                   ` : `
                   <div class="col-span-2">
                     <div class="text-[10px] text-[color:var(--ink-muted)] mb-0.5">周期 (ヶ月)</div>
-                    <input class="input input-mono" type="number" min="1" max="240" value="${ci.intervalMonths || 12}" oninput="updateCalInsp(${i}, 'intervalMonths', this.value)">
+                    <input class="input input-mono" type="number" min="0" max="240" value="${ci.intervalMonths != null ? ci.intervalMonths : 12}" oninput="updateCalInsp(${i}, 'intervalMonths', this.value)">
+                    <div class="text-[9px] text-[color:var(--ink-muted)] mt-0.5">0で不定期（「次回予定日指定」タイプ推奨）</div>
                   </div>
                   <div class="col-span-2">
                     <div class="text-[10px] text-[color:var(--ink-muted)] mb-0.5">対象機器</div>
@@ -14079,7 +14110,7 @@ function updateCalInsp(idx, field, value) {
   const item = ed.items[idx];
   if (field === 'intervalMonths') {
     const n = parseInt(value, 10);
-    if (!isNaN(n) && n > 0) item.intervalMonths = n;
+    if (!isNaN(n) && n >= 0) item.intervalMonths = n;   // 0=不定期 (v2.4.2)
     renderCalendarInspectionsModal();
     return;
   }
