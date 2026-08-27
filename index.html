@@ -1214,7 +1214,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '2.2.2-button-tidy';
+const VERSION = '2.2.3-cal-horizon';
 // 左上のバージョン表記をVERSION定数から自動反映（手動2箇所更新の同期漏れ対策 v1.89.39）
 try { const _vb = document.getElementById('appVersionBadge'); if (_vb) _vb.textContent = 'v' + VERSION; } catch (e) {}
 
@@ -8647,9 +8647,14 @@ function renderScheduleTable(c, u, plan) {
   if (state.settings.showCalInSchedule !== false) {
     const _pyrsCal = state.settings.predictionYears || 5;
     let calHorizon = addDays(new Date(), _pyrsCal * 365);
-    if (state.settings.horizonToContract !== false && u.contractEndDate && !u.contractEndDateIsTarget) {
-      const _ce = new Date(u.contractEndDate);
-      if (!isNaN(_ce) && _ce > calHorizon) calHorizon = _ce;
+    if (state.settings.horizonToContract !== false) {
+      // 生のu.contractEndDateだけ見ると「◯◯h点検の実施をもって終了」型
+      // （reason=inspection）や時間条件の契約が拾えず、予測範囲で切れて
+      // しまう（v2.2.2で実発生）。計算済みのplan.contractEnd.byを正とする。
+      const _ceRaw = (plan.contractEnd && plan.contractEnd.by) ? plan.contractEnd.by
+        : (u.contractEndDate && !u.contractEndDateIsTarget ? u.contractEndDate : null);
+      const _ce = _ceRaw ? new Date(_ceRaw) : null;
+      if (_ce && !isNaN(_ce) && _ce > calHorizon) calHorizon = _ce;
     }
     for (const ci of (u.calendarInspections || [])) {
       if (ci.hidden) continue;
@@ -10375,6 +10380,10 @@ const CHANGELOG = [
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
   ]},
+  { v: '2.2.3', items: [
+    '「契約終了まで」ONのとき、経過時間ベース点検の期日行が契約終了日まで表示されなかったのを修正。「◯◯h点検の実施をもって終了」など日付以外で決まる契約でも、計算された終了日まで期日を並べます',
+    '点検サイクルの機種カタログ一覧に「表で確認」を追加。編集を開かなくても、各機種の周期表（運転時間×種別に○）をワンクリックで表示・画像コピーできます',
+  ]},
   { v: '2.2.2', items: [
     'ユニット詳細のボタン配置を整理しました。上段バー＝日常の入力（＋点検記録を追加・運転時間入力・予定登録）、ヘッダー右＝出力（点検計画書・報告書印刷）と号機の管理（ユニット編集・表示項目・診断）に分け、削除は誤操作しないよう仕切りの右端に配置。重複していた運転時間の入力ボタンは上段バーに一本化しました',
   ]},
@@ -11282,6 +11291,7 @@ function renderSettingsPage(root) {
                 </div>`}
               </div>
               <div class="flex gap-1 flex-shrink-0">
+                <button class="btn btn-ghost btn-xs" onclick="openCycleMatrixModal('${key}')" data-tip="この機種の周期を「運転時間×種別に○」の表で表示します">表で確認</button>
                 <button class="btn btn-ghost btn-xs" onclick="openCycleModal('${key}')">編集</button>
                 <button class="btn btn-ghost btn-xs" onclick="duplicateCycle('${key}')" title="この機種をもとに新しい機種を作る">複製</button>
                 <button class="btn btn-ghost btn-xs btn-danger" onclick="deleteCycle('${key}')">削除</button>
@@ -16283,6 +16293,28 @@ function cycleMatrixHTML(cycle, boxId) {
       </div>
       <div class="text-[11px] text-[color:var(--ink-muted)] mt-2">1周期（${fmtHours(period)}h）分。以降はこの並びの繰り返しです。${cycle.alternating ? '交互実施（B1/B2など）の並びは代表例です — 実際の順序は実施履歴に追従します。' : ''}</div>
     </div>`;
+}
+
+// カタログ一覧から機種の周期表を単独モーダルで表示 (v2.2.3)
+function openCycleMatrixModal(key) {
+  const cycle = state.inspectionCycles[key];
+  if (!cycle) { toast('機種が見つかりません', 'error'); return; }
+  openModal(`
+    <div class="modal modal-lg">
+      <div class="px-6 py-5 hairline-b">
+        <div class="section-title">CYCLE MATRIX</div>
+        <h2 class="font-display font-bold text-xl mt-1">${escapeHtml(cycle.name || key)} の周期表</h2>
+        <div class="text-xs text-[color:var(--ink-muted)] mt-1">運転時間×種別に○ — メーカー資料と同じ形式</div>
+      </div>
+      <div class="px-6 py-4">
+        ${cycleMatrixHTML(cycle, 'catalogMatrixBox')}
+      </div>
+      <div class="px-6 py-4 hairline-t flex gap-2 justify-end">
+        <button class="btn btn-sm" onclick="copyElementImage('catalogMatrixBox', 'cycle_matrix_${key}')" data-tip="この表を画像としてコピーします。提案資料に貼り付けできます">画像でコピー</button>
+        <button class="btn" onclick="closeModal()">閉じる</button>
+      </div>
+    </div>
+  `);
 }
 
 // 編集中のカタログ入力から表示用サイクルを組み立てる（保存前でもプレビュー可能に）
