@@ -1214,7 +1214,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '2.2.1-cal-due';
+const VERSION = '2.2.2-button-tidy';
 // 左上のバージョン表記をVERSION定数から自動反映（手動2箇所更新の同期漏れ対策 v1.89.39）
 try { const _vb = document.getElementById('appVersionBadge'); if (_vb) _vb.textContent = 'v' + VERSION; } catch (e) {}
 
@@ -6904,11 +6904,14 @@ function renderUnitDetail(root) {
       ${escapeHtml(c.name)} に戻る
     </button>
 
-    <!-- よく使う操作を最上部に (v2.2.0) -->
+    <!-- 上段バー=日常の入力・記録、ヘッダー右=出力と号機の管理 (v2.2.2で整理) -->
     <div class="flex items-center gap-2 mb-4 flex-wrap no-print">
       <button class="btn btn-accent btn-sm" onclick="openInspectionModal('${c.id}','${u.id}')">＋ 点検記録を追加</button>
+      ${usesRunHours(u) ? `<button class="btn btn-primary btn-sm" onclick="openHoursModal('${c.id}','${u.id}')">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        運転時間入力
+      </button>` : ''}
       <button class="btn btn-sm" onclick="openPlanModal('${c.id}','${u.id}')">予定登録</button>
-      ${usesRunHours(u) ? `<button class="btn btn-sm" onclick="openHoursModal('${c.id}','${u.id}')">時間ログ追加</button>` : ''}
     </div>
 
     <div class="flex items-start justify-between mb-6 gap-4 flex-wrap">
@@ -6945,17 +6948,17 @@ function renderUnitDetail(root) {
           </div>`;
         })()}
       </div>
-      <div class="flex gap-2 flex-wrap no-print">
+      <div class="flex items-center gap-2 flex-wrap no-print">
+        <!-- 出力（お客様向け） -->
         <button class="btn btn-sm" onclick="openPlanDocModal('${c.id}', '${u.id}')" title="お客様提出用の点検計画書を作成">点検計画書</button>
-        <button class="btn btn-sm" onclick="openUnitModal('${c.id}', '${u.id}')">ユニット編集</button>
-        <button class="btn btn-sm btn-danger" onclick="deleteUnit('${c.id}','${u.id}')">削除</button>
-        <button class="btn btn-sm" onclick="showUnitDiagnostics('${c.id}','${u.id}')" data-tip="この号機の設定と予測の状態を一覧表示します。予測が出ないときは、この内容を添えて連絡してください">診断</button>
-        <button class="btn btn-sm" onclick="openSectionPrefModal()" data-tip="このユニット画面に表示するカードの選択と、上下ボタンでの並び替えができます" title="表示する項目と順番を変える">表示項目</button>
         <button class="btn btn-sm" onclick="printWithTip()">報告書印刷</button>
-        <button class="btn btn-primary btn-sm" onclick="openHoursModal('${c.id}','${u.id}')">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          運転時間入力
-        </button>
+        <span style="width:1px; height:20px; background: var(--hairline, #E5E1D8);"></span>
+        <!-- 号機の管理 -->
+        <button class="btn btn-sm" onclick="openUnitModal('${c.id}', '${u.id}')">ユニット編集</button>
+        <button class="btn btn-sm" onclick="openSectionPrefModal()" data-tip="このユニット画面に表示するカードの選択と、上下ボタンでの並び替えができます" title="表示する項目と順番を変える">表示項目</button>
+        <button class="btn btn-sm" onclick="showUnitDiagnostics('${c.id}','${u.id}')" data-tip="この号機の設定と予測の状態を一覧表示します。予測が出ないときは、この内容を添えて連絡してください">診断</button>
+        <span style="width:1px; height:20px; background: var(--hairline, #E5E1D8);"></span>
+        <button class="btn btn-sm btn-danger" onclick="deleteUnit('${c.id}','${u.id}')">削除</button>
       </div>
     </div>
 
@@ -10371,6 +10374,9 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '2.2.2', items: [
+    'ユニット詳細のボタン配置を整理しました。上段バー＝日常の入力（＋点検記録を追加・運転時間入力・予定登録）、ヘッダー右＝出力（点検計画書・報告書印刷）と号機の管理（ユニット編集・表示項目・診断）に分け、削除は誤操作しないよう仕切りの右端に配置。重複していた運転時間の入力ボタンは上段バーに一本化しました',
   ]},
   { v: '2.2.1', items: [
     '点検スケジュール表に、経過時間ベース点検（巡回点検・保安検査など）の今後の期日行を表示するようにしました。次回以降の期日が予測範囲（「契約終了まで」ONなら契約終了日まで）まで並び、各行の「実施を記録」からその項目を選択済みの状態で記録できます。ヘッダーの「経過時間ベース」チェックで記録行とまとめて非表示にできます',
