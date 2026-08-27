@@ -1214,7 +1214,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '2.3.1-cal-slot-ui';
+const VERSION = '2.3.2-sim-chain';
 // 左上のバージョン表記をVERSION定数から自動反映（手動2箇所更新の同期漏れ対策 v1.89.39）
 try { const _vb = document.getElementById('appVersionBadge'); if (_vb) _vb.textContent = 'v' + VERSION; } catch (e) {}
 
@@ -6894,6 +6894,23 @@ function renderUnitDetail(root) {
           : `前回実施 ${fmtHours(Math.round(wSim.lastHours))}h ＋ 次までの間隔 ${fmtHours(wSim.step)}h ＋ 許容 ${fmtHours(wSim.tol)}h`)
       : '';
     simDefault = wSim && wSim.hasLast ? Math.round(wSim.recommendHours) : simNominal;
+    // 次回が予定登録済みのとき、predicted[0]はその次の枠（次々回）になる。
+    // 基準を前回「実績」のままにすると2間隔分の計算になっておかしい（本人指摘）
+    // ため、シミュレーション対象の直前にある登録予定を前回基準に置き換える。
+    // 比較はスロット位置(nominalHours)で行う。atHoursはcomputeUnitPlanが
+    // 稼働ペースで再計算するため（atHoursRecomputed）、時間比較だと入力値と
+    // ズレて前段の予定を拾い損ねる。
+    var simPrevPlan = (plan.planned || [])
+      .filter(p => p.nominalHours != null && firstPred.nominalHours != null && p.nominalHours < firstPred.nominalHours)
+      .sort((a, b) => b.nominalHours - a.nominalHours)[0] || null;
+    if (simPrevPlan) {
+      const tolSim = state.settings.intervalToleranceHours != null ? state.settings.intervalToleranceHours : 200;
+      const distSim = (firstPred.nominalHours != null && simPrevPlan.nominalHours != null && firstPred.nominalHours > simPrevPlan.nominalHours)
+        ? (firstPred.nominalHours - simPrevPlan.nominalHours) : step;
+      simDefault = Math.round(firstPred.hours);
+      simHardLimit = Math.round(simPrevPlan.atHours + distSim + tolSim);
+      simLimitNote = `登録予定 ${fmtHours(Math.round(simPrevPlan.atHours))}h ＋ 次までの間隔 ${fmtHours(distSim)}h ＋ 許容 ${fmtHours(tolSim)}h`;
+    }
     simMin = Math.max(Math.round(current.hours) + 50, simDefault - step);
     simMax = Math.max(simNominal, simDefault) + step;
   }
@@ -7573,7 +7590,8 @@ function renderUnitDetail(root) {
         <div style="padding: 16px; border-top: 1px solid var(--border);">
           <div class="text-xs text-[color:var(--ink-muted)] mb-3">
             次回点検を何時間（または何月何日）で実施するか仮定できます。以降のスケジュールが再計算されます。<br>
-            初期値は上の「次回点検はいつまでに」で算出した<strong style="color: var(--ink);">推奨実施 ${fmtHours(simDefault)}h</strong> です。
+            ${simPrevPlan ? `<span style="color:#1E40AF;">直近の <strong>${fmtHours(Math.round(simPrevPlan.atHours))}h 点検は予定登録済み</strong>のため、その次の枠（${fmtHours(simNominal)}h）を、登録予定を前回基準としてシミュレーションします。</span><br>` : ''}
+            初期値は${simPrevPlan ? `登録予定から連鎖した` : `上の「次回点検はいつまでに」で算出した`}<strong style="color: var(--ink);">推奨実施 ${fmtHours(simDefault)}h</strong> です。
             ${simHardLimit != null ? `上限は <strong style="color: var(--red);">${fmtHours(simHardLimit)}h</strong>（${simLimitNote}）。` : ''}
           </div>
           ${simHardLimit != null ? `
@@ -8548,6 +8566,39 @@ function saveCalDueDate(customerId, unitId, ciId, dueKey) {
   toast(`予定日 ${fmtDate(v)} を設定しました`, 'success');
 }
 
+// 予定行の操作モーダル (v2.3.2): 実施を記録／削除の2ボタンが折り返して
+// 2行になるため、期日行と同じ「操作」1ボタン方式に統一。
+function openPlanActionModal(customerId, unitId, planId) {
+  const c = state.customers.find(x => x.id === customerId);
+  const u = c && c.units.find(x => x.id === unitId);
+  const p = u && (u.inspectionPlanned || []).find(x => x.id === planId);
+  if (!p) return;
+  openModal(`
+    <div class="modal" style="max-width: 460px;">
+      <div class="px-6 py-5 hairline-b">
+        <div class="section-title">PLANNED INSPECTION</div>
+        <h2 class="font-display font-bold text-lg mt-1">${p.nominalHours != null ? fmtHours(p.nominalHours) + 'h ' : ''}${inspTypeLabel(p.type)} の予定</h2>
+        <div class="text-xs text-[color:var(--ink-muted)] mt-1 font-mono">${fmtDate(p.date)}${p.atHours != null ? `　実施時 ${fmtHours(p.atHours)}h` : ''}${p.note ? `<div class="mt-1 font-sans">${escapeHtml(p.note)}</div>` : ''}</div>
+      </div>
+      <div class="px-6 py-4 flex flex-col gap-4">
+        <div class="hairline rounded p-3">
+          <div class="font-semibold text-sm mb-1">実施を記録する</div>
+          <div class="text-[11px] text-[color:var(--ink-muted)] mb-2">予定の内容（日付・累積h・種別・通常位置）が入った状態で記録画面を開きます。保存するとこの予定は実施済みとして自動削除されます</div>
+          <button class="btn btn-accent btn-sm" onclick="closeModal(); openInspectionModal('${customerId}','${unitId}',null,'${planId}')">記録画面を開く</button>
+        </div>
+        <div class="hairline rounded p-3">
+          <div class="font-semibold text-sm mb-1">予定を削除する</div>
+          <div class="text-[11px] text-[color:var(--ink-muted)] mb-2">日程が変わった場合は、削除してから「予定登録」で登録し直してください</div>
+          <button class="btn btn-sm btn-danger" onclick="closeModal(); deletePlan('${customerId}','${unitId}','${planId}')">削除する</button>
+        </div>
+      </div>
+      <div class="px-6 py-4 hairline-t flex gap-2 justify-end">
+        <button class="btn" onclick="closeModal()">閉じる</button>
+      </div>
+    </div>
+  `);
+}
+
 function toggleCalInSchedule(on) {
   state.settings.showCalInSchedule = !!on;
   saveState();
@@ -8984,7 +9035,7 @@ function renderScheduleTable(c, u, plan) {
           // or folded into another visit — so the button follows the row type, not
           // whether the date has passed.
           const actionBtn = r.source==='planned'
-            ? `<button class="btn btn-ghost btn-xs" style="color: var(--gold);" onclick="openInspectionModal('${c.id}','${u.id}',null,'${r.planId}')" title="この予定の内容で実施記録を作成し、予定を自動削除します">実施を記録</button><button class="btn btn-ghost btn-xs" onclick="deletePlan('${c.id}','${u.id}','${r.planId}')">削除</button>`
+            ? `<button class="btn btn-ghost btn-xs" onclick="openPlanActionModal('${c.id}','${u.id}','${r.planId}')" title="この予定の操作（実施を記録・予定を削除）">操作</button>`
             : (r.source==='history'
                 ? `<button class="btn btn-ghost btn-xs" onclick="openInspectionModal('${c.id}','${u.id}','${r.historyId}')">編集</button>`
                 : ((r.source==='predicted' || r.source==='skipped') && r.nominalHours != null
@@ -10515,6 +10566,10 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '2.3.2', items: [
+    '次回点検シミュレーションで、次回が予定登録済みのときの基準を修正。従来は次々回の枠を前回「実績」から計算していたため2間隔分になっていましたが、登録予定を前回基準として推奨値・上限を計算し、画面にもその旨を表示します',
+    '予定登録した行の「実施を記録」「削除」も、期日行と同じ「操作」ボタン1つに統合しました（2行に折り返す問題の解消）。押すと説明付きで選べます',
   ]},
   { v: '2.3.1', items: [
     '経過時間ベース期日行の操作を1つの「操作」ボタンに統合しました。押すと「実施を記録／予定日を設定／今回は不要」を説明付きで選べる画面が開きます（3つの小ボタンが表からはみ出て「不要」に気付けなかった問題の対応。不要の理由も入力欄で書けるようになりました）',
