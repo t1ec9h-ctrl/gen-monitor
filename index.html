@@ -1214,7 +1214,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '2.1.0-cal-hide';
+const VERSION = '2.1.1-cal-record';
 // 左上のバージョン表記をVERSION定数から自動反映（手動2箇所更新の同期漏れ対策 v1.89.39）
 try { const _vb = document.getElementById('appVersionBadge'); if (_vb) _vb.textContent = 'v' + VERSION; } catch (e) {}
 
@@ -3430,7 +3430,8 @@ function projectHoursToNow(unit) {
 // Returns { offset: number (integer), anchor: inspectionRecord | null, nominal: number | null }
 function calcMaintenanceOffset(unit) {
   const history = [...(unit.inspectionHistory||[])]
-    .filter(h => h.type !== 'initial' && h.type !== 'OTHER')
+    // カレンダー項目の記録(calendarInspectionId)はOTHER同様サイクル中立 (v2.1.1)
+    .filter(h => h.type !== 'initial' && h.type !== 'OTHER' && !h.calendarInspectionId)
     .sort((a,b)=> b.atHours - a.atHours);
   if (history.length === 0) return { offset: 0, anchor: null, nominal: null };
   const last = history[0];
@@ -3596,7 +3597,7 @@ function computeUnitPlanUncached(customer, unit, opts = {}) {
         // Chain anchor: latest dated inspection. OTHER/PLUG don't reset the
         // interval clock (same rule as computeIntervalWindow).
         const histMm = (unit.inspectionHistory || [])
-          .filter(h => h.type !== 'OTHER' && h.type !== 'PLUG' && h.date)
+          .filter(h => h.type !== 'OTHER' && h.type !== 'PLUG' && !h.calendarInspectionId && h.date)
           .sort((a, b) => new Date(b.date) - new Date(a.date));
         monthsChain = { mm, prev: histMm.length ? new Date(histMm[0].date) : null, annualPace };
         // The date rule advances one list slot every mm months regardless of
@@ -4479,7 +4480,7 @@ function buildPlanDocForUnit(c, u, opts = {}) {
         const cut = py > 0 ? new Date(Date.now() - py * 365 * 86400000) : null;
         const shown = (cut ? hrows.filter(h => new Date(h.date) >= cut) : hrows).slice(0, 20);
         if (shown.length === 0) return '';
-        const clock = hrows.filter(h => h.type !== 'OTHER').slice().sort((a, b) => a.atHours - b.atHours);
+        const clock = hrows.filter(h => h.type !== 'OTHER' && !h.calendarInspectionId).slice().sort((a, b) => a.atHours - b.atHours);
         const gapOf = (h) => {
           const i = clock.findIndex(x => x.id === h.id);
           return i > 0 ? Math.round(h.atHours - clock[i - 1].atHours) : null;
@@ -4897,7 +4898,7 @@ function computeIntervalWindow(c, u, precomputedPlan) {
   // Last performed inspection of any scheduled type. Ad-hoc 'OTHER' entries don't
   // reset the interval clock, so they're excluded.
   const hist = (u.inspectionHistory || [])
-    .filter(h => h.type !== 'OTHER' && h.type !== 'PLUG' && h.atHours != null && !isNaN(h.atHours))
+    .filter(h => h.type !== 'OTHER' && h.type !== 'PLUG' && !h.calendarInspectionId && h.atHours != null && !isNaN(h.atHours))
     .sort((a, b) => b.atHours - a.atHours);
   const last = hist[0] || null;
 
@@ -10239,6 +10240,10 @@ const CHANGELOG = [
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
   ]},
+  { v: '2.1.1', items: [
+    '発電機でも、実施記録の点検種別に経過時間ベース点検の項目（巡回点検・保安検査など）を選べるようになりました。保存すると履歴に残り、その項目の「前回実施日」が自動で前進して次回期日が再計算されます。サイクル計算（A/B点検の予測）には影響しません。カレンダー項目を選ぶと「プラグを交換した」チェックは自動で外れます（手で入れ直せます）',
+    '経過時間ベース点検の編集で、前回実施日・次回予定日を手入力できなかったのを修正（1文字打つたびに画面が再描画されて入力が飛んでいました。日付の確定時のみ反映するようにしました）',
+  ]},
   { v: '2.1.0', items: [
     '経過時間ベース点検（巡回点検・保安検査・性能検査工事など）を項目ごとに非表示にできるようになりました。「経過時間ベース点検」の編集画面で各項目の「表示中/非表示」を切り替えると、ダッシュボードの近づいている点検・件数集計・ユニット詳細の一覧・印刷から消えます。非表示中でも実施記録は従来どおり登録でき、履歴にも残ります',
   ]},
@@ -11810,7 +11815,9 @@ function openInspectionModal(customerId, unitId, inspId, fromPlanId) {
   // Chillers and auxiliaries have no A/B/C cycle. What they DO have is a list of
   // calendar items, so offer those as the type — recording one also advances its
   // next due date, which is the whole point of logging it.
-  const calItems = runHours ? [] : (u.calendarInspections || []);
+  // v2.1.1: エンジン機でもカレンダー項目を種別として選べる — 実施記録から
+  // 「前回実施日」が前進し、次回期日が再計算される（サイクル計算には無関係）。
+  const calItems = u.calendarInspections || [];
 
   let types, labelFor, altNote = '';
   if (!runHours) {
@@ -11835,10 +11842,16 @@ function openInspectionModal(customerId, unitId, inspId, fromPlanId) {
     const extraTypes = [];
     if (cycle.initial) extraTypes.push('initial');
     extraTypes.push('PLUG', 'OTHER');
-    types = [...displayTypes, ...extraTypes];
-    labelFor = (t) => t === 'initial' ? `初回 (${cycle.initial}h)`
-      : t === 'PLUG' ? '点火プラグ 先行交換のみ（点検ではない）'
-      : t === 'OTHER' ? 'その他 (サイクル計算に影響しません)' : `${t}点検`;
+    types = [...displayTypes, ...extraTypes, ...calItems.map(ci => 'CAL:' + ci.id)];
+    labelFor = (t) => {
+      if (t.startsWith('CAL:')) {
+        const ci = calItems.find(x => 'CAL:' + x.id === t);
+        return ci ? `${ci.name}（経過時間ベース）` : t;
+      }
+      return t === 'initial' ? `初回 (${cycle.initial}h)`
+        : t === 'PLUG' ? '点火プラグ 先行交換のみ（点検ではない）'
+        : t === 'OTHER' ? 'その他 (サイクル計算に影響しません)' : `${t}点検`;
+    };
     if (displayTypes.length === 0) {
       altNote = `<div class="text-[11px] mt-1" style="color: var(--amber);">※ 機種が未設定か、点検サイクルカタログが未取込です。設定タブから取り込むと点検種別が選べます。</div>`;
     } else if (cycle.alternating && cycle.alternating.types) {
@@ -11900,7 +11913,7 @@ function openInspectionModal(customerId, unitId, inspId, fromPlanId) {
         ${runHours ? `
         <div id="im_plugWrap" class="hairline rounded p-3" style="background: var(--surface-2);">
           <label class="flex items-start gap-2" style="cursor: pointer;">
-            <input type="checkbox" id="im_plugReplaced" style="margin-top: 3px; cursor: pointer;"
+            <input type="checkbox" id="im_plugReplaced" style="margin-top: 3px; cursor: pointer;" onchange="this.dataset.userEdited='1'"
               ${editing ? (editing.plugReplaced !== false ? 'checked' : '') : 'checked'}>
             <span>
               <span class="font-semibold text-sm">この作業で点火プラグを交換した</span>
@@ -12581,7 +12594,14 @@ function saveInspection(customerId, unitId, inspId, fromPlanId) {
     return;
   }
 
-  const type = typeRaw;
+  // v2.1.1: カレンダー項目の実施記録（エンジン機）。項目名で履歴に残し、
+  // 「前回実施日」を前進させる。サイクル計算には影響しない（nominalなし）。
+  let type = typeRaw, calRef = null;
+  if (typeRaw.startsWith('CAL:')) {
+    const ciId = typeRaw.slice(4);
+    const ci = (u.calendarInspections || []).find(x => x.id === ciId);
+    if (ci) { type = ci.name; calRef = ci; }
+  }
   if (isNaN(hours)) { toast('累積hを入力','error'); return; }
   // Same backwards check as the hours log — an inspection reading is a reading
   {
@@ -12608,12 +12628,12 @@ function saveInspection(customerId, unitId, inspId, fromPlanId) {
     ? true
     : !!document.getElementById('im_plugReplaced')?.checked;
   // Require nominalHours for offset-contributing types
-  if (type !== 'initial' && type !== 'OTHER' && type !== 'PLUG') {
+  if (!calRef && type !== 'initial' && type !== 'OTHER' && type !== 'PLUG') {
     if (nominalHours == null || isNaN(nominalHours) || nominalHours <= 0) {
       toast('通常位置h（何時間点検か）を入力してください','error'); return;
     }
   }
-  const noNominal = (type === 'initial' || type === 'OTHER' || type === 'PLUG');
+  const noNominal = (!!calRef || type === 'initial' || type === 'OTHER' || type === 'PLUG');
 
   // No need to copy the reading into hoursLog — getCurrentHoursState reads
   // inspection records directly, so the two can't drift apart.
@@ -12624,20 +12644,31 @@ function saveInspection(customerId, unitId, inspId, fromPlanId) {
     r.date = date; r.atHours = hours; r.type = type; r.note = note;
     r.nominalHours = noNominal ? null : nominalHours;
     r.plugReplaced = plugReplaced;
+    r.calendarInspectionId = calRef ? calRef.id : (r.calendarInspectionId || null);
     r.displayName = displayName; r.extraWork = extraWork;
   } else {
     u.inspectionHistory.push({
       id: uid('i'),
       date, atHours: hours, type, note,
       nominalHours: noNominal ? null : nominalHours,
+      calendarInspectionId: calRef ? calRef.id : null,
       plugReplaced, displayName, extraWork,
     });
+  }
+  let calExtra = '';
+  if (calRef) {
+    // 非エンジン機と同じ規則: 古い記録の再入力で予定を巻き戻さない
+    if (!calRef.lastDate || new Date(date) > new Date(calRef.lastDate)) {
+      calRef.lastDate = date;
+      const due = nextCalendarInspectionDue(calRef);
+      calExtra = due ? `　次回期日 ${fmtDate(due)}` : (calRef.hidden ? '' : '');
+    }
   }
   if (fromPlanId) u.inspectionPlanned = (u.inspectionPlanned||[]).filter(x=>x.id!==fromPlanId);
   saveState();
   closeModal();
   showPage('unit-detail');
-  toast(fromPlanId ? '保存しました　予定は実施済みとして削除しました' : '保存しました','success');
+  toast('保存しました' + calExtra + (fromPlanId ? '　予定は実施済みとして削除しました' : ''),'success');
 }
 
 // Suggest nominal hours (nearest step multiple) based on atHours typing
@@ -12658,7 +12689,13 @@ function updateNominalVisibility() {
   const wrapEl = document.getElementById('im_nominalWrap');
   if (!typeEl || !wrapEl) return;
   const t = typeEl.value;
-  wrapEl.style.display = (t === 'initial' || t === 'OTHER') ? 'none' : '';
+  const isCal = t.startsWith('CAL:');
+  wrapEl.style.display = (isCal || t === 'initial' || t === 'OTHER') ? 'none' : '';
+  // 巡回点検などのカレンダー項目でプラグ交換チェックが既定ONのままだと、
+  // 保存のたびにプラグ時計が誤ってリセットされる。種別切替時に自動で
+  // 外す／戻す（ユーザーが自分で触ったあとは尊重する）。
+  const plugEl = document.getElementById('im_plugReplaced');
+  if (plugEl && plugEl.dataset.userEdited !== '1') plugEl.checked = !isCal;
 }
 
 function deleteInspection(customerId, unitId, inspId) {
@@ -13398,12 +13435,12 @@ function renderCalendarInspectionsModal__body() {
                   </div>
                   <div class="col-span-2">
                     <div class="text-[10px] text-[color:var(--ink-muted)] mb-0.5">前回実施日</div>
-                    <input class="input input-mono" type="date" value="${ci.lastDate || ''}" oninput="updateCalInsp(${i}, 'lastDate', this.value)">
+                    <input class="input input-mono" type="date" value="${ci.lastDate || ''}" onchange="updateCalInsp(${i}, 'lastDate', this.value)">
                   </div>
                   ` : ci.mode === 'next' ? `
                   <div class="col-span-2">
                     <div class="text-[10px] text-[color:var(--ink-muted)] mb-0.5">次回予定日</div>
-                    <input class="input input-mono" type="date" value="${ci.nextDate || ''}" oninput="updateCalInsp(${i}, 'nextDate', this.value)">
+                    <input class="input input-mono" type="date" value="${ci.nextDate || ''}" onchange="updateCalInsp(${i}, 'nextDate', this.value)">
                   </div>
                   <div class="col-span-2">
                     <div class="text-[10px] text-[color:var(--ink-muted)] mb-0.5">以降の周期</div>
@@ -13427,7 +13464,7 @@ function renderCalendarInspectionsModal__body() {
                   </div>
                   <div class="col-span-2">
                     <div class="text-[10px] text-[color:var(--ink-muted)] mb-0.5">前回実施日</div>
-                    <input class="input input-mono" type="date" value="${ci.lastDate || ''}" oninput="updateCalInsp(${i}, 'lastDate', this.value)">
+                    <input class="input input-mono" type="date" value="${ci.lastDate || ''}" onchange="updateCalInsp(${i}, 'lastDate', this.value)">
                   </div>
                   `}
                   <div class="col-span-1 flex justify-end gap-1">
