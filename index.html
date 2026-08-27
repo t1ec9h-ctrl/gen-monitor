@@ -1214,7 +1214,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '2.1.1-cal-record';
+const VERSION = '2.2.0-ux';
 // 左上のバージョン表記をVERSION定数から自動反映（手動2箇所更新の同期漏れ対策 v1.89.39）
 try { const _vb = document.getElementById('appVersionBadge'); if (_vb) _vb.textContent = 'v' + VERSION; } catch (e) {}
 
@@ -6904,6 +6904,13 @@ function renderUnitDetail(root) {
       ${escapeHtml(c.name)} に戻る
     </button>
 
+    <!-- よく使う操作を最上部に (v2.2.0) -->
+    <div class="flex items-center gap-2 mb-4 flex-wrap no-print">
+      <button class="btn btn-accent btn-sm" onclick="openInspectionModal('${c.id}','${u.id}')">＋ 点検記録を追加</button>
+      <button class="btn btn-sm" onclick="openPlanModal('${c.id}','${u.id}')">予定登録</button>
+      ${usesRunHours(u) ? `<button class="btn btn-sm" onclick="openHoursModal('${c.id}','${u.id}')">時間ログ追加</button>` : ''}
+    </div>
+
     <div class="flex items-start justify-between mb-6 gap-4 flex-wrap">
       <div>
         <div class="flex items-center gap-2">
@@ -7543,7 +7550,12 @@ function renderUnitDetail(root) {
           <label class="text-[11px] font-mono text-[color:var(--ink-muted)] tracking-wider flex items-center gap-1" style="cursor:pointer;" data-tip="ONのとき、確定した契約終了期日が予測範囲より先にあれば、終了までの点検を範囲を超えて表示します。印刷を短くまとめたいときはOFFにすると予測範囲どおりに切れます">
             <input type="checkbox" ${state.settings.horizonToContract !== false ? 'checked' : ''} onchange="toggleHorizonContract(this.checked)">契約終了まで
           </label>
+          <label class="text-[11px] font-mono text-[color:var(--ink-muted)] tracking-wider flex items-center gap-1" style="cursor:pointer;" data-tip="巡回点検など経過時間ベース点検の実施記録行を、この表に出すかをまとめて切り替えます（記録は消えません）">
+            <input type="checkbox" ${state.settings.showCalInSchedule !== false ? 'checked' : ''} onchange="toggleCalInSchedule(this.checked)">経過時間ベース
+          </label>
           <button class="btn btn-sm" onclick="openPlanModal('${c.id}','${u.id}')">予定登録</button>
+          <button class="btn btn-sm no-print" onclick="copyScheduleTsv()" data-tip="表をタブ区切りでコピーします。Excelにそのまま貼り付けて加工できます">表をコピー</button>
+          <button class="btn btn-sm no-print" onclick="copyElementImage('schedTable', 'schedule')" data-tip="表を画像（PNG）としてクリップボードにコピーします。提案資料にそのまま貼り付けできます">画像でコピー</button>
         </div>
       </div>
 
@@ -8420,6 +8432,59 @@ function setSchedPastYears(val) {
   showPageKeepingScroll('unit-detail');
 }
 
+function toggleCalInSchedule(on) {
+  state.settings.showCalInSchedule = !!on;
+  saveState();
+  const c = state.customers.find(x=>x.id===currentCustomerId);
+  const u = c && c.units.find(x=>x.id===currentUnitId);
+  if (!c || !u) return;
+  renderScheduleTable(c, u, computeUnitPlan(c, u));
+}
+
+// スケジュール表をタブ区切りでコピー (v2.2.0) — Excel貼り付け用
+function copyScheduleTsv() {
+  const el = document.getElementById('schedTable');
+  const table = el && el.querySelector('table');
+  if (!table) { toast('コピーできる表がありません', 'error'); return; }
+  const lines = [];
+  for (const tr of table.querySelectorAll('tr')) {
+    const cells = [...tr.querySelectorAll('th,td')].map(td => (td.innerText || '').replace(/\s+/g, ' ').trim());
+    if (cells.some(x => x !== '')) lines.push(cells.join('\t'));
+  }
+  navigator.clipboard.writeText(lines.join('\n')).then(
+    () => toast('表をコピーしました。Excelなどに貼り付けて加工できます', 'success'),
+    () => toast('コピーに失敗しました', 'error'));
+}
+
+// 要素をPNG画像としてコピー (v2.2.0) — 提案資料への貼り付け用。
+// html2canvasを初回のみCDNから読み込む。クリップボード不可の環境ではPNG保存。
+async function copyElementImage(elId, fileName) {
+  const el = document.getElementById(elId);
+  if (!el) { toast('対象が見つかりません', 'error'); return; }
+  try {
+    if (!window.html2canvas) {
+      toast('画像化の準備中…', 'default', 1500);
+      await new Promise((res, rej) => {
+        const sc = document.createElement('script');
+        sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+        sc.onload = res; sc.onerror = () => rej(new Error('html2canvasの読み込みに失敗（オフライン？）'));
+        document.head.appendChild(sc);
+      });
+    }
+    const canvas = await window.html2canvas(el, { backgroundColor: '#FFFFFF', scale: 2 });
+    const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+    if (navigator.clipboard && window.ClipboardItem) {
+      await navigator.clipboard.write([new window.ClipboardItem({ 'image/png': blob })]);
+      toast('画像としてコピーしました。資料に貼り付けできます', 'success');
+    } else {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob); a.download = (fileName || 'table') + '.png'; a.click();
+      URL.revokeObjectURL(a.href);
+      toast('この環境では画像コピーができないため、PNGとして保存しました', 'success');
+    }
+  } catch (e) { toast('画像化に失敗: ' + (e && e.message || e), 'error'); }
+}
+
 function toggleHorizonContract(on) {
   state.settings.horizonToContract = !!on;
   saveState();
@@ -8447,6 +8512,20 @@ function handleYearsChange(v) {
 
 function renderScheduleTable(c, u, plan) {
   const el = document.getElementById('schedTable');
+  // 予測ゼロ診断 (v2.2.0): 「予測が出ない」ときに原因を表の上に表示する。
+  // 黙って空になると設定ミスかバグか判別できないため。
+  let noPredNote = '';
+  if (usesRunHours(u) && (!plan.predicted || plan.predicted.length === 0)) {
+    const cyc0 = getCycle(u.maker);
+    let why;
+    if (!cyc0 || !(cyc0.types || []).length) why = '機種の点検サイクルが未設定です。設定タブでカタログを取り込むか、この号機の「専用サイクル」を設定してください';
+    else if (!plan.current) why = '累積運転時間の記録がありません。時間ログを1件追加すると予測が始まります';
+    else if (!plan.model) why = '稼働ペースを推定できるだけの時間ログがありません。時間ログを追加してください';
+    else if (plan.contractEnd && plan.contractEnd.by && new Date(plan.contractEnd.by) < new Date()) why = '保守契約終了日を過ぎているため予測を打ち切っています。契約情報（終了日）を確認してください';
+    else if ((plan.planned || []).length > 0) why = '予測位置がすべて予定登録済みのため、予測行の代わりに予定行を表示しています';
+    else why = '予測範囲内に次の点検が到達していない可能性があります。予測範囲スライダーを延ばすか、「契約終了まで」をONにしてください';
+    noPredNote = `<div class="text-[12px] px-3 py-2 mb-2 rounded" style="background:#FEF3C7; color:#92400E;">今後の予測が表示されていません — ${why}</div>`;
+  }
   const offset = plan.offsetInfo ? plan.offsetInfo.offset : 0;
   // combine planned (user-entered), predicted (future), and history (past)
   let rows = [];
@@ -8496,6 +8575,7 @@ function renderScheduleTable(c, u, plan) {
       date: dt,
       source: 'history',
       note: h.note,
+      calRecord: !!h.calendarInspectionId,
       historyId: h.id,
       displayName: h.displayName || '',
       slotNote: h.extraWork || '',
@@ -8549,6 +8629,13 @@ function renderScheduleTable(c, u, plan) {
       date: ceDate, source: 'contract-end', contractReason: ce.reason, contractInfo: ce });
   }
 
+  // 経過時間ベース点検（巡回など）の記録行の一括表示切替 (v2.2.0)。
+  // 2ヶ月ごとの巡回が積もると本命のA/B点検が埋もれるため、既定ONのまま
+  // ワンクリックで消せるようにする。記録自体は履歴に残り続ける。
+  if (state.settings.showCalInSchedule === false) {
+    rows = rows.filter(r => !r.calRecord);
+  }
+
   // 「契約終了まで」OFFで予測を範囲で切っているとき、最終点検行の直後に終了帯が
   // 並ぶと「もうすぐ契約終了」に見えて驚く。範囲より先にある帯の手前に省略行を
   // 挟み、間の点検が省略されていることを示す (v1.89.39)。
@@ -8566,7 +8653,7 @@ function renderScheduleTable(c, u, plan) {
   const _sdir = tableSort().schedule;
   rows.sort((a,b)=> _sdir === 'asc' ? a.date - b.date : b.date - a.date);
   if (rows.length === 0) {
-    el.innerHTML = `<div class="p-6"><div class="empty-state">運転時間データを入力すると点検予測が表示されます。</div></div>`;
+    el.innerHTML = `${noPredNote}<div class="p-6"><div class="empty-state">運転時間データを入力すると点検予測が表示されます。</div></div>`;
     return;
   }
   // Interval from the previous inspection in the timeline. This is what actually
@@ -8674,6 +8761,7 @@ function renderScheduleTable(c, u, plan) {
   const futureCount = rows.filter(r => r.date >= now).length;
 
   el.innerHTML = `
+    ${noPredNote}
     <div class="px-5 pt-3 pb-2 flex items-center gap-2 flex-wrap">
       <div class="text-xs text-[color:var(--ink-muted)] mr-2">表示：</div>
       ${pastCutCount > 0 ? `<span class="chip" style="font-size: 10px;" data-tip="ヘッダーの「過去」で表示範囲を変えられます">過去${state.settings.schedPastYears}年より前 ${pastCutCount}件を省略</span>` : ''}
@@ -10239,6 +10327,13 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '2.2.0', items: [
+    'ユニット詳細の最上部に「＋点検記録を追加」「予定登録」「時間ログ追加」のボタンを配置。ページを下までスクロールしなくても、よく使う操作にすぐ届きます',
+    '点検スケジュール表のヘッダーに「経過時間ベース」チェックを追加。巡回点検などの実施記録行を表からまとめて表示/非表示できます（記録は消えません）',
+    '今後の予測が表示されないとき、その理由（サイクル未設定・時間ログ不足・契約終了日超過など）を表の上に表示するようにしました',
+    '点検サイクルの編集画面（機種カタログ・専用サイクルの両方）に「表で確認」を追加。メーカー資料と同じ「運転時間×種別に○」の周期表で設定内容を確認でき、「画像でコピー」で提案資料にそのまま貼り付けできます',
+    'スケジュール表に「表をコピー」（Excelに貼り付けられるタブ区切り）と「画像でコピー」（PNG）を追加。提案資料づくりでデータを自分で加工したいときに使えます',
   ]},
   { v: '2.1.1', items: [
     '発電機でも、実施記録の点検種別に経過時間ベース点検の項目（巡回点検・保安検査など）を選べるようになりました。保存すると履歴に残り、その項目の「前回実施日」が自動で前進して次回期日が再計算されます。サイクル計算（A/B点検の予測）には影響しません。カレンダー項目を選ぶと「プラグを交換した」チェックは自動で外れます（手で入れ直せます）',
@@ -16051,6 +16146,116 @@ function registerPastedCycle() {
   toast(`「${name}」を登録しました`, 'success');
 }
 
+// 点検サイクルの表形式ビュー (v2.2.0): メーカー資料の周期表と同じ、
+// 「運転時間×種別に○」の行列で1周期分を可視化する。
+function cycleMatrixHTML(cycle, boxId) {
+  if (!cycle) return '<div class="text-xs text-[color:var(--ink-muted)]">サイクル未設定</div>';
+  let period;
+  if (Array.isArray(cycle.explicit) && cycle.explicit.length) {
+    period = cycle.explicitPeriod || cycle.explicit[cycle.explicit.length - 1].hours;
+  } else {
+    const ivs = (cycle.types || []).map(t => t.interval).filter(n => n > 0);
+    period = ivs.length ? Math.max(...ivs) : 0;
+    if (cycle.alternating && cycle.alternating.types && cycle.alternating.types.length) period *= 2; // B1/B2両方を見せる
+  }
+  if (!period) return '<div class="text-xs text-[color:var(--ink-muted)]">周期が設定されていません</div>';
+  period = Math.min(period, 200000);
+  // simulateCycleは貼り付け解析用でカタログ形式のalternatingを展開しないため、
+  // 表示用に自前で展開する（最大間隔優先＋交互実施は基準種別の出現順に交代）。
+  const sim = (() => {
+    if (Array.isArray(cycle.explicit) && cycle.explicit.length) {
+      return cycle.explicit.filter(e => e.hours <= period).map(e => ({ hours: e.hours, type: e.type }));
+    }
+    const st = cycle.step || 2000;
+    const out = [];
+    const alt = cycle.alternating;
+    let altIdx = 0;
+    for (let hh = st; hh <= period; hh += st) {
+      let winner = null, wIv = 0;
+      for (const t of (cycle.types || [])) {
+        if (t.interval > 0 && hh % t.interval === 0 && t.interval > wIv) { winner = t.type; wIv = t.interval; }
+      }
+      if (!winner) continue;
+      if (alt && alt.base && winner === alt.base && (alt.types || []).length) {
+        winner = alt.types[altIdx % alt.types.length];
+        altIdx++;
+      }
+      out.push({ hours: hh, type: winner });
+    }
+    const ini = parseFloat(cycle.initial);
+    if (!isNaN(ini) && ini > 0 && (!out.length || ini < out[0].hours)) {
+      out.unshift({ hours: ini, type: cycle.initialType || '初回' });
+    }
+    return out;
+  })();
+  if (!sim.length) return '<div class="text-xs text-[color:var(--ink-muted)]">表示できる点検がありません</div>';
+  const cols = [];
+  for (const r of sim) if (!cols.includes(r.type)) cols.push(r.type);
+  const ivOf = (t) => {
+    const def = (cycle.types || []).find(x => x.type === t);
+    if (def) return def.interval;
+    if (cycle.alternating && (cycle.alternating.types || []).includes(t)) {
+      const bd = (cycle.types || []).find(x => x.type === cycle.alternating.base);
+      return bd ? bd.interval * 2 : null;
+    }
+    return null;
+  };
+  return `
+    <div id="${boxId || 'cycleMatrixBox'}" style="background:#FFFFFF; padding:8px;">
+      <div style="overflow-x:auto;">
+        <table class="text-xs" style="border-collapse:collapse; min-width:420px; width:100%;">
+          <thead>
+            <tr class="font-mono text-[10px] text-[color:var(--ink-muted)]">
+              <th class="py-1 px-2 text-right hairline-b" style="white-space:nowrap;">間隔 →</th>
+              ${cols.map(t => `<th class="py-1 px-2 text-center hairline-b" style="white-space:nowrap;">${ivOf(t) ? fmtHours(ivOf(t)) + 'h' : '—'}</th>`).join('')}
+            </tr>
+            <tr>
+              <th class="py-1 px-2 text-right hairline-b" style="white-space:nowrap;">運転時間＼種別</th>
+              ${cols.map(t => `<th class="py-1 px-2 text-center hairline-b font-semibold" style="white-space:nowrap;">${escapeHtml(t)}</th>`).join('')}
+            </tr>
+          </thead>
+          <tbody>
+            ${sim.map(r => `
+              <tr class="hairline-b">
+                <td class="py-1 px-2 text-right font-mono" style="white-space:nowrap;">${fmtHours(r.hours)}</td>
+                ${cols.map(t => `<td class="py-1 px-2 text-center" style="${t === r.type ? 'color:var(--red); font-weight:700;' : ''}">${t === r.type ? '○' : ''}</td>`).join('')}
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div class="text-[11px] text-[color:var(--ink-muted)] mt-2">1周期（${fmtHours(period)}h）分。以降はこの並びの繰り返しです。${cycle.alternating ? '交互実施（B1/B2など）の並びは代表例です — 実際の順序は実施履歴に追従します。' : ''}</div>
+    </div>`;
+}
+
+// 編集中のカタログ入力から表示用サイクルを組み立てる（保存前でもプレビュー可能に）
+function cycleFromEditState(ed) {
+  const cyc = { step: parseInt(ed.step, 10) || 2000,
+    types: (ed.types || []).filter(t => t.type && parseFloat(t.interval) > 0).map(t => ({ type: t.type, interval: parseFloat(t.interval) })) };
+  const ini = parseFloat(ed.initial);
+  if (!isNaN(ini) && ini > 0) { cyc.initial = ini; cyc.initialType = ed.initialType || null; }
+  if (ed.alternatingBase && ed.alternatingTypes) {
+    cyc.alternating = { base: ed.alternatingBase,
+      types: String(ed.alternatingTypes).split(',').map(x => x.trim()).filter(Boolean) };
+    if (ed.alternatingResetAfter) cyc.alternating.resetAfter = String(ed.alternatingResetAfter).split(',').map(x => x.trim()).filter(Boolean);
+  }
+  if (Array.isArray(ed.explicit) && ed.explicit.length) {
+    cyc.explicit = ed.explicit; cyc.explicitPeriod = ed.explicitPeriod; cyc.explicitRepeat = ed.explicitRepeat;
+  }
+  return cyc;
+}
+
+function toggleCycleMatrix() {
+  if (!window._cycleEdit) return;
+  window._cycleEdit.showMatrix = !window._cycleEdit.showMatrix;
+  renderCycleModal();
+}
+
+function toggleUnitCycleMatrix() {
+  if (!_unitCycleEdit) return;
+  _unitCycleEdit.showMatrix = !_unitCycleEdit.showMatrix;
+  renderUnitCycleModal();
+}
+
 function openCycleModal(key) {
   const editing = key ? (state.inspectionCycles[key] || null) : null;
   const isBuiltin = false;   // no schedules ship with this build
@@ -16214,6 +16419,14 @@ function renderCycleModal__body() {
             </div>
           </div>
         </div>
+      </div>
+      <div class="px-6 pb-2">
+        <div class="flex items-center gap-2 flex-wrap">
+          <button class="btn btn-sm" onclick="toggleCycleMatrix()">${ed.showMatrix ? '表を閉じる' : '表で確認'}</button>
+          ${ed.showMatrix ? `<button class="btn btn-sm" onclick="copyElementImage('cycleMatrixBox', 'cycle_matrix')" data-tip="この表を画像としてコピーします。提案資料に貼り付けできます">画像でコピー</button>` : ''}
+          <span class="text-[11px] text-[color:var(--ink-muted)]">メーカー資料と同じ「運転時間×種別に○」の周期表で確認できます</span>
+        </div>
+        ${ed.showMatrix ? `<div class="mt-2 hairline rounded">${cycleMatrixHTML(cycleFromEditState(ed), 'cycleMatrixBox')}</div>` : ''}
       </div>
       <div class="px-6 py-4 hairline-t flex gap-2 justify-end">
         <button class="btn" onclick="closeModal()">キャンセル</button>
@@ -18189,6 +18402,16 @@ function renderUnitCycleModal__body() {
             <div class="text-[11px] text-[color:var(--ink-muted)]">メーカー資料の「運転時間 点検名」一覧を貼ると、周期設定に自動反映します。規則化できない一覧は書かれたとおり（explicit）に設定します。</div>
             <button class="btn btn-sm" onclick="analyzeUnitCyclePaste()">解析して反映</button>
           </div>
+        </div>
+
+        <!-- Cycle matrix view (v2.2.0) -->
+        <div class="hairline rounded p-3" style="background: var(--surface-2);">
+          <div class="flex items-center gap-2 flex-wrap">
+            <button class="btn btn-sm" onclick="toggleUnitCycleMatrix()">${_unitCycleEdit.showMatrix ? '表を閉じる' : '表で確認'}</button>
+            ${_unitCycleEdit.showMatrix ? `<button class="btn btn-sm" onclick="copyElementImage('unitCycleMatrixBox', 'cycle_matrix')" data-tip="この表を画像としてコピーします">画像でコピー</button>` : ''}
+            <span class="text-[11px] text-[color:var(--ink-muted)]">周期表（運転時間×種別に○）で確認</span>
+          </div>
+          ${_unitCycleEdit.showMatrix ? `<div class="mt-2 hairline rounded" style="background: var(--surface);">${cycleMatrixHTML(_unitCycleEdit.cycle, 'unitCycleMatrixBox')}</div>` : ''}
         </div>
 
         <!-- Alternating section -->
