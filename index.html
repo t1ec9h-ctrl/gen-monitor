@@ -1221,7 +1221,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '2.4.4-quiet-ok';
+const VERSION = '2.4.5-print-window-first';
 // 左上のバージョン表記をVERSION定数から自動反映（手動2箇所更新の同期漏れ対策 v1.89.39）
 try { const _vb = document.getElementById('appVersionBadge'); if (_vb) _vb.textContent = 'v' + VERSION; } catch (e) {}
 
@@ -5308,7 +5308,37 @@ function proceedPrint() {
   setTimeout(() => window.print(), 120);
 }
 
+// 印刷時のみ「次回点検はいつまでに」を先頭カードへ移動 (v2.4.5)。
+// 画面の表示順は好みで並び替えられるが、客先に渡す紙の1ページ目には
+// 必ずこのカードが入るべき、という本人要望。印刷後は元の位置へ戻す。
+let _printWinPh = null;
+function _printWindowFirst() {
+  try {
+    if (currentPage !== 'unit-detail') return;
+    if (document.body.classList.contains('plan-doc-open')) return;
+    const win = document.querySelector('[data-sec="window"]');
+    if (!win || !win.parentElement) return;
+    const siblings = Array.from(win.parentElement.children);
+    const firstSec = siblings.find(el => el.dataset && el.dataset.sec && el.dataset.sec !== 'setup');
+    if (!firstSec || firstSec === win) return;   // 既に先頭（setup除く）なら何もしない
+    _printWinPh = document.createComment('win-print-slot');
+    win.parentElement.insertBefore(_printWinPh, win);
+    firstSec.parentElement.insertBefore(win, firstSec);
+  } catch (e) {}
+}
+function _printWindowRestore() {
+  try {
+    if (!_printWinPh || !_printWinPh.parentElement) { _printWinPh = null; return; }
+    const win = document.querySelector('[data-sec="window"]');
+    if (win) _printWinPh.parentElement.insertBefore(win, _printWinPh);
+    _printWinPh.remove();
+    _printWinPh = null;
+  } catch (e) { _printWinPh = null; }
+}
+window.addEventListener('afterprint', _printWindowRestore);
+
 window.addEventListener('beforeprint', () => {
+  _printWindowFirst();
   const el = document.getElementById('printHeader');
   if (!el) return;
   if (document.body.classList.contains('plan-doc-open')) { el.innerHTML = ''; return; }
@@ -10745,6 +10775,9 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '2.4.5', items: [
+    '報告書印刷のとき、「次回点検はいつまでに」を自動で先頭カードにして1ページ目に入れるようにしました。画面の表示順は変わらず、印刷が終わると元の並びに戻ります（表示項目で非表示にしている場合は出ません）',
   ]},
   { v: '2.4.4', items: [
     '「次回点検はいつまでに」の緑の判定カード（通常位置がそのまま適正範囲です）を廃止しました。問題がないときは要約3枠と実施期間だけを表示し、実施時期の超過・間隔上限の超え・繰り上げ推奨など注意が必要なときにだけ判定カードが出ます',
