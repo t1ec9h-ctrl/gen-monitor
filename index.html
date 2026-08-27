@@ -356,6 +356,9 @@ table.data-table tr.row-clickable { cursor: pointer; }
 }
 .heatmap-cell-large:hover { transform: scale(1.06); z-index: 1; box-shadow: 0 2px 8px rgba(23,25,28,0.12); }
 .heatmap-none { background: #F1F1EA; color: #C0BDB2; }
+/* 計算対象外の年度は画面では淡く。印刷では全月しっかり見せる (v2.4.8) */
+.heatmap-dim { opacity: .4; }
+@media print { .heatmap-dim { opacity: 1 !important; } }
 .heatmap-l1 { background: #E3EAF8; color: #1E3A8A; }
 .heatmap-l2 { background: #C7D5F0; color: #1E3A8A; }
 .heatmap-l3 { background: #8FABDE; color: #FFF; }
@@ -1230,7 +1233,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '2.4.7-print-rows';
+const VERSION = '2.4.8-heatmap-tools';
 // 左上のバージョン表記をVERSION定数から自動反映（手動2箇所更新の同期漏れ対策 v1.89.39）
 try { const _vb = document.getElementById('appVersionBadge'); if (_vb) _vb.textContent = 'v' + VERSION; } catch (e) {}
 
@@ -7929,6 +7932,8 @@ function renderUnitDetail(root) {
           <select class="input input-mono no-print" style="height: 28px; font-size: 11px; padding: 0 8px;" title="この号機だけの設定です" onchange="setUnitFyStart('${c.id}','${u.id}', this.value)">
             ${[1,2,3,4,5,6,7,8,9,10,11,12].map(m => `<option value="${m}" ${fyStartFor(u) === m ? 'selected' : ''}>${m}月始まり</option>`).join('')}
           </select>
+          <button class="btn btn-sm no-print" onclick="copyHeatmapTsv()" data-tip="年度×月の稼働時間をタブ区切りでコピーします。Excelにそのまま貼り付けて加工できます">表をコピー</button>
+          <button class="btn btn-sm no-print" onclick="copyElementImage('heatmapContainer', 'heatmap')" data-tip="ヒートマップを画像（PNG）としてコピーします。提案資料に貼り付けできます">画像でコピー</button>
           <button class="btn btn-sm" onclick="openMonthlyModal('${c.id}','${u.id}')">編集</button>
         </div>
       </div>
@@ -8778,6 +8783,16 @@ function toggleCalInHistory(customerId, unitId, on) {
   const c = state.customers.find(x=>x.id===customerId);
   const u = c && c.units.find(x=>x.id===unitId);
   if (c && u) renderInspectionHistory(c, u);
+}
+
+// ヒートマップを年度×月の表としてコピー (v2.4.8)。描画時に window._heatmapTsv へ
+// 蓄積した値（推定含む・空欄=データなし）をタブ区切りにする。
+function copyHeatmapTsv() {
+  const rows = window._heatmapTsv;
+  if (!Array.isArray(rows) || rows.length < 2) { toast('コピーできるデータがありません', 'error'); return; }
+  navigator.clipboard.writeText(rows.map(r => r.join('\t')).join('\n')).then(
+    () => toast('稼働時間の表をコピーしました。Excelなどに貼り付けて加工できます', 'success'),
+    () => toast('コピーに失敗しました', 'error'));
 }
 
 // 任意の表コンテナをタブ区切りでコピー (v2.3.3で汎用化) — Excel貼り付け用
@@ -9974,6 +9989,7 @@ function renderMonthlyHeatmap(c, u) {
         </button>
       </div>
       ` : ''}
+      ${(() => { window._heatmapTsv = [['年度', ...monthSeq.map(m => m + '月'), '合計']]; return ''; })()}
       <div style="display: grid; grid-template-columns: 26px 56px repeat(12, 1fr) 64px; gap: 3px;">
         <div class="font-mono text-[9px] text-[color:var(--ink-muted)] text-center pb-1" title="計算に含める年度">計算</div>
         <div></div>
@@ -9981,13 +9997,23 @@ function renderMonthlyHeatmap(c, u) {
         <div class="font-mono text-[10px] text-[color:var(--ink)] text-center pb-1 font-bold">合計</div>
         ${sortedFYs.map(fy => {
           const yearUsed = isYearUsedForModel(u, fy);
+          window._heatmapTsv.push([
+            fyLabel(fy) + (yearUsed ? '' : '（計算対象外）'),
+            ...monthSeq.map((m, seqIdx) => {
+              const { y, m: actualM } = actualYM(fy, seqIdx);
+              const k = `${y}-${String(actualM).padStart(2,'0')}`;
+              const vv = lookup[k];
+              return vv == null ? '' : String(Math.round(vv));
+            }),
+            annualTotals[fy] != null ? String(Math.round(annualTotals[fy].total)) : '',
+          ]);
           return `
           <div class="self-center text-center">
             <input type="checkbox" ${yearUsed ? 'checked' : ''} style="cursor: pointer;"
               onchange="toggleModelYear('${c.id}','${u.id}',${fy})"
               title="${yearUsed ? 'この年度を点検時期の計算に使っています。外すと除外します' : 'この年度は計算から外れています。入れると含めます'}">
           </div>
-          <div class="font-mono text-[11px] self-center font-semibold" style="color: ${yearUsed ? 'var(--ink)' : 'var(--ink-muted)'};">
+          <div class="font-mono text-[11px] self-center font-semibold ${yearUsed ? '' : 'heatmap-dim'}" style="color: ${yearUsed ? 'var(--ink)' : 'var(--ink-muted)'};">
             ${fyLabel(fy)}
             ${fySubLabel(fy)}
           </div>
@@ -10020,11 +10046,12 @@ function renderMonthlyHeatmap(c, u) {
               title = `${key}: 当月（進行中）\n月が終わったら入力してください`;
             }
             const clickable = (actual[key] != null)
-              ? ` onclick="toggleMonthExcluded('${c.id}','${u.id}','${key}')" style="cursor:pointer;${yearUsed ? '' : ' opacity:.4;'}"`
+              ? ` onclick="toggleMonthExcluded('${c.id}','${u.id}','${key}')" style="cursor:pointer;"`
               : ((isPending || isCurrent)
                   ? ` onclick="openMonthlyModal('${c.id}','${u.id}')" style="cursor:pointer;"`
-                  : (yearUsed ? '' : ' style="opacity:.4;"'));
+                  : '');
             const cls = [
+              yearUsed ? '' : 'heatmap-dim',
               (isPending || isCurrent) ? '' : (isZero ? '' : levelClass(v)),
               isZero ? 'heatmap-zero' : '',
               isEst ? 'heatmap-estimated' : '',
@@ -10791,6 +10818,10 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '2.4.8', items: [
+    '月別稼働ヒートマップの印刷で、計算対象外の年度も薄くせずしっかり表示するようにしました（画面では従来どおり淡色で区別します）',
+    'ヒートマップに「表をコピー」（年度×月の稼働時間をExcel用タブ区切りで）と「画像でコピー」（PNG）を追加しました。計算対象外の年度は行ラベルに（計算対象外）と付きます',
   ]},
   { v: '2.4.7', items: [
     '点検スケジュール表の印刷を修正しました。経過時間ベース点検の期日行で右端の列がズレていたのを解消し、期日行にも他の点検と同じ通し番号を振るようにしました',
