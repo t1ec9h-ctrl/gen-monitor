@@ -1214,7 +1214,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '2.3.2-sim-chain';
+const VERSION = '2.3.3-history-tools';
 // 左上のバージョン表記をVERSION定数から自動反映（手動2箇所更新の同期漏れ対策 v1.89.39）
 try { const _vb = document.getElementById('appVersionBadge'); if (_vb) _vb.textContent = 'v' + VERSION; } catch (e) {}
 
@@ -8094,6 +8094,11 @@ function renderUnitDetail(root) {
               : `<button class="btn btn-sm" onclick="openBulkHistoryModal('${c.id}','${u.id}')" title="未記録の過去点検を確認">過去分を確認</button>`;
           })()}
           ${sortToggleButton('history')}
+          <label class="text-[11px] font-mono text-[color:var(--ink-muted)] tracking-wider flex items-center gap-1 no-print" style="cursor:pointer;" data-tip="巡回点検など経過時間ベース点検の実施記録を、この一覧に出すかを切り替えます（記録は消えません）">
+            <input type="checkbox" ${state.settings.showCalInHistory !== false ? 'checked' : ''} onchange="toggleCalInHistory('${c.id}','${u.id}', this.checked)">経過時間ベース
+          </label>
+          <button class="btn btn-sm no-print" onclick="copyTableTsv('inspectionHistoryTable')" data-tip="一覧をタブ区切りでコピーします。Excelにそのまま貼り付けて加工できます">表をコピー</button>
+          <button class="btn btn-sm no-print" onclick="copyElementImage('inspectionHistoryTable', 'history')" data-tip="一覧を画像（PNG）としてコピーします。提案資料に貼り付けできます">画像でコピー</button>
           <button class="btn btn-sm" onclick="openInspectionModal('${c.id}','${u.id}')">履歴追加</button>
         </div>
       </div>
@@ -8606,6 +8611,29 @@ function toggleCalInSchedule(on) {
   const u = c && c.units.find(x=>x.id===currentUnitId);
   if (!c || !u) return;
   renderScheduleTable(c, u, computeUnitPlan(c, u));
+}
+
+function toggleCalInHistory(customerId, unitId, on) {
+  state.settings.showCalInHistory = !!on;
+  saveState();
+  const c = state.customers.find(x=>x.id===customerId);
+  const u = c && c.units.find(x=>x.id===unitId);
+  if (c && u) renderInspectionHistory(c, u);
+}
+
+// 任意の表コンテナをタブ区切りでコピー (v2.3.3で汎用化) — Excel貼り付け用
+function copyTableTsv(containerId) {
+  const el = document.getElementById(containerId);
+  const table = el && el.querySelector('table');
+  if (!table) { toast('コピーできる表がありません', 'error'); return; }
+  const lines = [];
+  for (const tr of table.querySelectorAll('tr')) {
+    const cells = [...tr.querySelectorAll('th,td')].map(td => (td.innerText || '').replace(/\s+/g, ' ').trim());
+    if (cells.some(x => x !== '')) lines.push(cells.join('\t'));
+  }
+  navigator.clipboard.writeText(lines.join('\n')).then(
+    () => toast('表をコピーしました。Excelなどに貼り付けて加工できます', 'success'),
+    () => toast('コピーに失敗しました', 'error'));
 }
 
 // スケジュール表をタブ区切りでコピー (v2.2.0) — Excel貼り付け用
@@ -9958,10 +9986,14 @@ function sortToggleButton(which) {
 function renderInspectionHistory(c, u) {
   const el = document.getElementById('inspectionHistoryTable');
   const dir = tableSort().history;
-  const rows = [...(u.inspectionHistory||[])].sort((a,b)=>
-    dir === 'asc' ? new Date(a.date) - new Date(b.date) : new Date(b.date) - new Date(a.date));
+  // 経過時間ベース（巡回など）の記録の表示切替 (v2.3.3)。OFFでも記録は残る
+  const hideCal = state.settings.showCalInHistory === false;
+  const rows = [...(u.inspectionHistory||[])]
+    .filter(h => !(hideCal && h.calendarInspectionId))
+    .sort((a,b)=> dir === 'asc' ? new Date(a.date) - new Date(b.date) : new Date(b.date) - new Date(a.date));
+  const hiddenCalN = (u.inspectionHistory||[]).length - rows.length;
   if (rows.length === 0) {
-    el.innerHTML = `<div class="p-6"><div class="empty-state">点検履歴がありません。</div></div>`;
+    el.innerHTML = `<div class="p-6"><div class="empty-state">${hiddenCalN > 0 ? `経過時間ベースの記録 ${hiddenCalN} 件を非表示中です。` : '点検履歴がありません。'}</div></div>`;
     return;
   }
   // Interval from the previous scheduled inspection. PLUG-only and ad-hoc
@@ -10566,6 +10598,11 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '2.3.3', items: [
+    '点検実施履歴を編集・追加して保存したとき、画面が上部に飛んでいたのを修正（元のスクロール位置を保ちます）',
+    '点検実施履歴に「経過時間ベース」チェックを追加。巡回点検などの実施記録を一覧から表示/非表示できます（通常点検のみの表示にできます・記録は消えません）',
+    '点検実施履歴にも「表をコピー」（Excel用タブ区切り）と「画像でコピー」を追加しました',
   ]},
   { v: '2.3.2', items: [
     '次回点検シミュレーションで、次回が予定登録済みのときの基準を修正。従来は次々回の枠を前回「実績」から計算していたため2間隔分になっていましたが、登録予定を前回基準として推奨値・上限を計算し、画面にもその旨を表示します',
@@ -12954,7 +12991,7 @@ function saveInspection(customerId, unitId, inspId, fromPlanId) {
     if (fromPlanId) u.inspectionPlanned = (u.inspectionPlanned||[]).filter(x=>x.id!==fromPlanId);
     saveState();
     closeModal();
-    showPage('unit-detail');
+    reRenderPreservingScroll('unit-detail');   // 履歴編集後に画面上部へ飛ばない (v2.3.3)
     toast('保存しました' + extra + (fromPlanId ? '　予定は実施済みとして削除しました' : ''), 'success');
     return;
   }
@@ -13038,7 +13075,7 @@ function saveInspection(customerId, unitId, inspId, fromPlanId) {
   if (fromPlanId) u.inspectionPlanned = (u.inspectionPlanned||[]).filter(x=>x.id!==fromPlanId);
   saveState();
   closeModal();
-  showPage('unit-detail');
+  reRenderPreservingScroll('unit-detail');   // 履歴編集後に画面上部へ飛ばない (v2.3.3)
   toast('保存しました' + calExtra + (fromPlanId ? '　予定は実施済みとして削除しました' : ''),'success');
 }
 
