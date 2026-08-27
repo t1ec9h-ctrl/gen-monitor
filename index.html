@@ -1214,7 +1214,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '2.2.0-ux';
+const VERSION = '2.2.1-cal-due';
 // 左上のバージョン表記をVERSION定数から自動反映（手動2箇所更新の同期漏れ対策 v1.89.39）
 try { const _vb = document.getElementById('appVersionBadge'); if (_vb) _vb.textContent = 'v' + VERSION; } catch (e) {}
 
@@ -8636,6 +8636,34 @@ function renderScheduleTable(c, u, plan) {
     rows = rows.filter(r => !r.calRecord);
   }
 
+  // 経過時間ベース点検の今後の期日行 (v2.2.1): 巡回・保安検査などの次回以降を
+  // 表に並べる（本人指摘: 実施記録しか出ず「現在以降」が見えなかった）。
+  // 地平線は時間ベース予測と同じ考え方 — 「契約終了まで」ONで確定契約終了日が
+  // あればそこまで、なければ予測範囲(年)まで。ヘッダーの「経過時間ベース」
+  // チェックで記録行とまとめてオンオフできる。
+  if (state.settings.showCalInSchedule !== false) {
+    const _pyrsCal = state.settings.predictionYears || 5;
+    let calHorizon = addDays(new Date(), _pyrsCal * 365);
+    if (state.settings.horizonToContract !== false && u.contractEndDate && !u.contractEndDateIsTarget) {
+      const _ce = new Date(u.contractEndDate);
+      if (!isNaN(_ce) && _ce > calHorizon) calHorizon = _ce;
+    }
+    for (const ci of (u.calendarInspections || [])) {
+      if (ci.hidden) continue;
+      let due = nextCalendarInspectionDue(ci);
+      let guard = 0;
+      while (due && due <= calHorizon && guard < 200) {
+        rows.push({ type: 'CAL_DUE', hours: null, nominalHours: null, date: new Date(due),
+          source: 'calendar-due', calRecord: true, calName: ci.name, calId: ci.id, calTarget: ci.target || '' });
+        const iv = ci.mode === 'annual'
+          ? Math.max(12, Math.round((ci.intervalMonths || 12) / 12) * 12)
+          : (ci.intervalMonths || 12);
+        const nx = new Date(due); nx.setMonth(nx.getMonth() + iv);
+        due = nx; guard++;
+      }
+    }
+  }
+
   // 「契約終了まで」OFFで予測を範囲で切っているとき、最終点検行の直後に終了帯が
   // 並ぶと「もうすぐ契約終了」に見えて驚く。範囲より先にある帯の手前に省略行を
   // 挟み、間の点検が省略されていることを示す (v1.89.39)。
@@ -8843,6 +8871,22 @@ function renderScheduleTable(c, u, plan) {
                 <td colspan="8" class="text-[11px]" style="color:var(--ink-muted);">
                   〜 予測範囲（${r.gapYears}年）より先の点検は省略しています。契約終了までの点検を見るときは「契約終了まで」をONにしてください 〜
                 </td>
+              </tr>`;
+          }
+          if (r.source === 'calendar-due') {
+            const dcal = daysBetween(now, r.date);
+            return dividerRow + `
+              <tr style="background: var(--surface-2);">
+                <td></td>
+                <td class="text-right font-mono text-xs text-[color:var(--ink-muted)]">—</td>
+                <td><span class="text-xs font-semibold">${escapeHtml(r.calName)}</span>${r.calTarget ? `<span class="chip ml-1" style="font-size:9px;">${escapeHtml(r.calTarget)}</span>` : ''}<div class="text-[10px] text-[color:var(--ink-muted)]">経過時間ベース</div></td>
+                <td class="text-right font-mono text-xs text-[color:var(--ink-muted)]">—</td>
+                <td class="text-right font-mono text-xs text-[color:var(--ink-muted)]">—</td>
+                <td class="text-right font-mono text-xs text-[color:var(--ink-muted)]">—</td>
+                <td class="text-right font-mono text-xs">${fmtDate(r.date)}</td>
+                <td>${r.date < now ? `<span class="tag status-danger">${Math.abs(dcal)}日超過</span>` : `<span class="tag">あと${dcal}日</span>`}</td>
+                <td class="text-[10px] text-[color:var(--ink-muted)]">期日</td>
+                <td class="no-print"><button class="btn btn-ghost btn-xs" onclick="openInspectionModal('${c.id}','${u.id}',null,null,'CAL:${r.calId}')">実施を記録</button></td>
               </tr>`;
           }
           if (r.source === 'contract-target') {
@@ -10327,6 +10371,9 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '2.2.1', items: [
+    '点検スケジュール表に、経過時間ベース点検（巡回点検・保安検査など）の今後の期日行を表示するようにしました。次回以降の期日が予測範囲（「契約終了まで」ONなら契約終了日まで）まで並び、各行の「実施を記録」からその項目を選択済みの状態で記録できます。ヘッダーの「経過時間ベース」チェックで記録行とまとめて非表示にできます',
   ]},
   { v: '2.2.0', items: [
     'ユニット詳細の最上部に「＋点検記録を追加」「予定登録」「時間ログ追加」のボタンを配置。ページを下までスクロールしなくても、よく使う操作にすぐ届きます',
@@ -11894,7 +11941,7 @@ function clearSlotOverride(customerId, unitId, nominalHours) {
   toast('個別設定を解除しました', 'success');
 }
 
-function openInspectionModal(customerId, unitId, inspId, fromPlanId) {
+function openInspectionModal(customerId, unitId, inspId, fromPlanId, presetType) {
   const c = state.customers.find(x=>x.id===customerId);
   const u = c.units.find(x=>x.id===unitId);
   const editing = inspId ? (u.inspectionHistory||[]).find(i=>i.id===inspId) : null;
@@ -12042,6 +12089,11 @@ function openInspectionModal(customerId, unitId, inspId, fromPlanId) {
   `);
   // Initialize visibility based on current type selection, and mark user-edited flag on manual change
   setTimeout(() => {
+    // 期日行の「実施を記録」から開いたとき、該当のカレンダー項目を自動選択 (v2.2.1)
+    if (presetType) {
+      const te = document.getElementById('im_type');
+      if (te && [...te.options].some(o => o.value === presetType)) te.value = presetType;
+    }
     updateNominalVisibility();
     const nominalEl = document.getElementById('im_nominalHours');
     if (nominalEl) {
