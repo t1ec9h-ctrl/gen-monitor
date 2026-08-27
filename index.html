@@ -1214,7 +1214,7 @@ function restoreBackup(slot) {
     toast('バックアップ復元失敗: ' + e.message, 'error');
   }
 }
-const VERSION = '2.3.3-history-tools';
+const VERSION = '2.4.0-cal-compact';
 // 左上のバージョン表記をVERSION定数から自動反映（手動2箇所更新の同期漏れ対策 v1.89.39）
 try { const _vb = document.getElementById('appVersionBadge'); if (_vb) _vb.textContent = 'v' + VERSION; } catch (e) {}
 
@@ -8613,6 +8613,16 @@ function toggleCalInSchedule(on) {
   renderScheduleTable(c, u, computeUnitPlan(c, u));
 }
 
+// 期日まとめ行の展開/折りたたみ (v2.4.0) — 保存しないUI状態
+function toggleCalDueExpand(unitId, ciId) {
+  window._calDueExpand = window._calDueExpand || {};
+  const k = unitId + ':' + ciId;
+  window._calDueExpand[k] = !window._calDueExpand[k];
+  const c = state.customers.find(x => x.id === currentCustomerId);
+  const u = c && c.units.find(x => x.id === unitId);
+  if (c && u) renderScheduleTable(c, u, computeUnitPlan(c, u));
+}
+
 function toggleCalInHistory(customerId, unitId, on) {
   state.settings.showCalInHistory = !!on;
   saveState();
@@ -8853,22 +8863,43 @@ function renderScheduleTable(c, u, plan) {
     }
     for (const ci of (u.calendarInspections || [])) {
       if (ci.hidden) continue;
+      // まず地平線までの全期日を集める
+      const allDues = [];
       let due = nextCalendarInspectionDue(ci);
       let guard = 0;
+      const iv = ci.mode === 'annual'
+        ? Math.max(12, Math.round((ci.intervalMonths || 12) / 12) * 12)
+        : (ci.intervalMonths || 12);
       while (due && due <= calHorizon && guard < 200) {
-        // 回ごとのオーバーライド (v2.3.0): 理論期日(ISO)をキーに
-        // 「今回は不要」(skipped) と「予定日確定」(scheduled) を保持する。
         const dueKey = toISODate(due);
         const ov = (ci.slotOverrides || {})[dueKey] || null;
-        rows.push({ type: 'CAL_DUE', hours: null, nominalHours: null,
-          date: new Date(ov && ov.status === 'scheduled' && ov.date ? ov.date : due),
-          source: 'calendar-due', calRecord: true, calName: ci.name, calId: ci.id, calTarget: ci.target || '',
-          calDueKey: dueKey, calOv: ov, calTheoretical: new Date(due) });
-        const iv = ci.mode === 'annual'
-          ? Math.max(12, Math.round((ci.intervalMonths || 12) / 12) * 12)
-          : (ci.intervalMonths || 12);
+        allDues.push({ dueKey, ov, theoretical: new Date(due),
+          date: new Date(ov && ov.status === 'scheduled' && ov.date ? ov.date : due) });
         const nx = new Date(due); nx.setMonth(nx.getMonth() + iv);
         due = nx; guard++;
+      }
+      if (!allDues.length) continue;
+      // 既定は直近1回＋操作済みの回のみ表示し、残りをまとめ行に畳む (v2.4.0)。
+      // 巡回2ヶ月×契約終了まで だと数十行になり本命のA/B点検が埋もれるため。
+      const expKey = u.id + ':' + ci.id;
+      const expanded = !!(window._calDueExpand && window._calDueExpand[expKey]);
+      let plainShown = 0, hiddenN = 0, lastShownDate = allDues[0].date;
+      for (const d of allDues) {
+        const show = expanded || d.ov || plainShown < 1;
+        if (show) {
+          if (!d.ov) plainShown++;
+          if (d.date > lastShownDate) lastShownDate = d.date;
+          rows.push({ type: 'CAL_DUE', hours: null, nominalHours: null, date: new Date(d.date),
+            source: 'calendar-due', calRecord: true, calName: ci.name, calId: ci.id, calTarget: ci.target || '',
+            calDueKey: d.dueKey, calOv: d.ov, calTheoretical: d.theoretical });
+        } else hiddenN++;
+      }
+      if (hiddenN > 0 || expanded) {
+        const untilD = allDues[allDues.length - 1].date;
+        rows.push({ type: 'CAL_MORE', hours: null, nominalHours: null,
+          date: new Date((expanded ? untilD : lastShownDate).getTime() + 30000),
+          source: 'calendar-more', calRecord: true, calName: ci.name, calId: ci.id,
+          calExpanded: expanded, calMoreCount: hiddenN, calIv: iv, calUntil: untilD });
       }
     }
   }
@@ -9079,6 +9110,17 @@ function renderScheduleTable(c, u, plan) {
                 <td class="font-mono text-xs" style="color:var(--ink-muted);">⋮</td>
                 <td colspan="8" class="text-[11px]" style="color:var(--ink-muted);">
                   〜 予測範囲（${r.gapYears}年）より先の点検は省略しています。契約終了までの点検を見るときは「契約終了まで」をONにしてください 〜
+                </td>
+              </tr>`;
+          }
+          if (r.source === 'calendar-more') {
+            return dividerRow + `
+              <tr style="background: var(--surface-2); cursor: pointer;" onclick="toggleCalDueExpand('${u.id}','${r.calId}')" title="${r.calExpanded ? '直近のみの表示に戻します' : 'この項目の以降の期日をすべて表示します'}">
+                <td></td>
+                <td colspan="9" class="text-[11px] py-1.5" style="color: var(--ink-muted);">
+                  ${r.calExpanded
+                    ? `▲ ${escapeHtml(r.calName)} を直近のみの表示に戻す`
+                    : `▽ ${escapeHtml(r.calName)}：以降 ${r.calIv}ヶ月ごとに あと${r.calMoreCount}回（〜${fmtDate(r.calUntil)}）— クリックで表示`}
                 </td>
               </tr>`;
           }
@@ -10598,6 +10640,9 @@ const CHANGELOG = [
     '点検サイクルカタログをリポジトリから撤去（社内配布物のため公開しない。カタログのインポート機能はそのまま）',
     'スキップした過去枠の行が表の中で「今日」の位置に流れていたのを修正（ズレ適用のうえ、通過済みは過去日として推定）',
     '次回点検シミュレーションが繰り上げ後の実施位置を基準にするように（素の格子で1枠ズレていたのを修正）',
+  ]},
+  { v: '2.4.0', items: [
+    '経過時間ベース点検の期日行が多すぎる問題への対応。既定では各項目の直近の期日（＋不要・予定確定にした回）だけを表示し、残りは「以降◯ヶ月ごとに あと◯回（〜終了時期）」のまとめ行に畳みます。まとめ行をクリックすると全展開、もう一度クリックで戻ります。巡回が数十行並んでA/B点検が埋もれることがなくなります',
   ]},
   { v: '2.3.3', items: [
     '点検実施履歴を編集・追加して保存したとき、画面が上部に飛んでいたのを修正（元のスクロール位置を保ちます）',
